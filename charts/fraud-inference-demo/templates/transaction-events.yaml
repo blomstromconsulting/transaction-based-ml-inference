@@ -1,0 +1,93 @@
+{{- if .Values.transactionEvents.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.fullname" . }}-transaction-events
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: transaction-events
+spec:
+  replicas: {{ .Values.transactionEvents.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: transaction-events
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: transaction-events
+      {{- with .Values.transactionEvents.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: transaction-events
+          image: "{{ .Values.transactionEvents.image.repository }}:{{ .Values.transactionEvents.image.tag }}"
+          imagePullPolicy: {{ .Values.transactionEvents.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.transactionEvents.containerPort }}
+          env:
+            - name: FRAUD_REDIS_HOST
+              value: {{ include "fraud-inference-demo.redisName" . | quote }}
+            - name: FRAUD_REDIS_PORT
+              value: {{ .Values.redis.service.port | quote }}
+            - name: FRAUD_FEAST_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.feastName" .) .Values.feast.service.port | quote }}
+            - name: FRAUD_FEATURE_WRITER_ENABLED
+              value: {{ .Values.featureWriter.enabled | quote }}
+            - name: FRAUD_FEATURE_WRITER_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.featureWriterName" .) .Values.featureWriter.service.port | quote }}
+{{- range $modelName, $model := .Values.models }}
+            - name: FRAUD_MODEL_{{ $modelName }}_KSERVE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "fraud-inference-demo.configName" $ }}
+                  key: fraud.model.{{ $modelName }}.kserve-url
+            - name: FRAUD_MODEL_{{ $modelName }}_FEATURE_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "fraud-inference-demo.configName" $ }}
+                  key: fraud.model.{{ $modelName }}.feature-service
+{{- end }}
+          {{- with .Values.transactionEvents.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.transactionEvents.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.transactionEvents.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.transactionEvents.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.fullname" . }}-transaction-events
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: transaction-events
+spec:
+  type: {{ .Values.transactionEvents.service.type }}
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: transaction-events
+  ports:
+    - name: http
+      port: {{ .Values.transactionEvents.service.port }}
+      targetPort: http
+{{- end }}

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fraud-inference-demo.configName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+data:
+{{- range $modelName, $model := .Values.models }}
+  {{- if $.Values.mockPredictors.enabled }}
+  fraud.model.{{ $modelName }}.kserve-url: {{ printf "http://%s:%v/v1/models/%s:predict" $model.inferenceServiceName $.Values.mockPredictors.service.port ($model.inferenceServiceName | replace "_" "-") | quote }}
+  {{- else if and $.Values.kserve.enabled $.Values.kserve.generatedInferenceUrls.enabled }}
+  fraud.model.{{ $modelName }}.kserve-url: {{ printf "http://%s.%s.svc.cluster.local%s" $model.inferenceServiceName $.Release.Namespace (printf $.Values.kserve.generatedInferenceUrls.pathTemplate $model.inferenceServiceName) | quote }}
+  {{- else }}
+  fraud.model.{{ $modelName }}.kserve-url: {{ $model.kserveUrl | quote }}
+  {{- end }}
+  fraud.model.{{ $modelName }}.feature-service: {{ $model.featureService | quote }}
+  {{ $modelName }}_FEATURE_SERVICE: {{ $model.featureService | quote }}
+{{- end }}

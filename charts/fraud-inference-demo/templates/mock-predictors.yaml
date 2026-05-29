@@ -1,0 +1,126 @@
+{{- if .Values.mockPredictors.enabled -}}
+{{- range $modelName, $model := .Values.models }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $model.inferenceServiceName }}
+  labels:
+    {{- include "fraud-inference-demo.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: mock-predictor
+    fraud.example.com/model: {{ $modelName | quote }}
+spec:
+  replicas: {{ $.Values.mockPredictors.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: mock-predictor
+      fraud.example.com/model: {{ $modelName | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: mock-predictor
+        fraud.example.com/model: {{ $modelName | quote }}
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" $ }}
+      containers:
+        - name: mock-predictor
+          image: "{{ $.Values.mockPredictors.image.repository }}:{{ $.Values.mockPredictors.image.tag }}"
+          imagePullPolicy: {{ $.Values.mockPredictors.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $.Values.mockPredictors.containerPort }}
+          env:
+            - name: MODEL_NAME
+              value: {{ $modelName | quote }}
+          command:
+            - python
+            - -c
+          args:
+            - |
+              import json
+              import os
+              from http.server import BaseHTTPRequestHandler, HTTPServer
+
+              MODEL_FEATURES = {
+                  "MODEL_A": [
+                      "transaction_amount",
+                      "transaction_country",
+                      "merchant_category",
+                      "customer_transaction_count_1h",
+                      "customer_transaction_count_24h",
+                      "customer_total_amount_24h",
+                      "customer_avg_amount_7d",
+                  ],
+                  "MODEL_B": [
+                      "transaction_amount",
+                      "transaction_country",
+                      "merchant_category",
+                      "customer_transaction_count_1h",
+                      "customer_transaction_count_24h",
+                      "customer_total_amount_24h",
+                      "customer_avg_amount_7d",
+                      "customer_max_amount_7d",
+                      "customer_distinct_merchants_24h",
+                      "customer_cross_border_count_7d",
+                      "merchant_risk_score",
+                  ],
+              }
+
+              class Handler(BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      length = int(self.headers.get("content-length", "0"))
+                      raw_body = self.rfile.read(length) if length else b"{}"
+                      try:
+                          body = json.loads(raw_body)
+                      except json.JSONDecodeError:
+                          body = {}
+                      model = body.get("model") or os.environ.get("MODEL_NAME", "MODEL_A")
+                      score = 0.91 if model == "MODEL_B" else 0.42
+                      decision = "DECLINE" if score >= 0.85 else "APPROVE"
+                      response = {
+                          "fraudScore": score,
+                          "decision": decision,
+                          "featuresUsed": MODEL_FEATURES.get(model, MODEL_FEATURES["MODEL_A"]),
+                          "metadata": {
+                              "source": "helm-mock-predictor",
+                              "model": model,
+                              "featureService": body.get("featureService"),
+                          },
+                      }
+                      payload = json.dumps(response).encode("utf-8")
+                      self.send_response(200)
+                      self.send_header("content-type", "application/json")
+                      self.send_header("content-length", str(len(payload)))
+                      self.end_headers()
+                      self.wfile.write(payload)
+
+                  def log_message(self, format, *args):
+                      return
+
+              HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+          {{- with $.Values.mockPredictors.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $model.inferenceServiceName }}
+  labels:
+    {{- include "fraud-inference-demo.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: mock-predictor
+    fraud.example.com/model: {{ $modelName | quote }}
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: mock-predictor
+    fraud.example.com/model: {{ $modelName | quote }}
+  ports:
+    - name: http
+      port: {{ $.Values.mockPredictors.service.port }}
+      targetPort: http
+{{- end }}
+{{- end }}

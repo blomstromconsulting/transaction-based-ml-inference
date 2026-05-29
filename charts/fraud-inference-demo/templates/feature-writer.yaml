@@ -1,0 +1,54 @@
+{{- if .Values.featureWriter.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.featureWriterName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-writer
+spec:
+  replicas: {{ .Values.featureWriter.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: feast-feature-writer
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: feast-feature-writer
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      containers:
+        - name: feature-writer
+          image: "{{ .Values.featureWriter.image.repository }}:{{ .Values.featureWriter.image.tag }}"
+          imagePullPolicy: {{ .Values.featureWriter.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.featureWriter.containerPort }}
+          env:
+            - name: FEAST_REPO_PATH
+              value: /feast
+            - name: FEAST_REDIS_CONNECTION_STRING
+              value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" .) .Values.redis.service.port | quote }}
+          {{- with .Values.featureWriter.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.featureWriterName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-writer
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-writer
+  ports:
+    - name: http
+      port: {{ .Values.featureWriter.service.port }}
+      targetPort: http
+{{- end }}

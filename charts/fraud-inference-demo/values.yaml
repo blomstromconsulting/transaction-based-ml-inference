@@ -1,0 +1,124 @@
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imagePullSecrets: []
+
+transactionEvents:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/transaction-events
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  containerPort: 8080
+  resources: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+redis:
+  enabled: true
+  fullnameOverride: ""
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  containerPort: 6379
+  resources: {}
+
+feast:
+  enabled: true
+  image:
+    repository: ghcr.io/example/fraud-feast-repo
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 6566
+  containerPort: 6566
+  workingDir: /feast
+  command:
+    - sh
+    - -c
+  args:
+    - python scripts/render_feature_store.py && feast apply && feast serve --host 0.0.0.0 --port 6566
+  resources: {}
+
+featureWriter:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/fraud-feast-writer
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  containerPort: 8080
+  resources: {}
+
+models:
+  MODEL_A:
+    inferenceServiceName: fraud-model-a
+    kserveUrl: http://fraud-model-a.default/v1/models/fraud-model-a:predict
+    featureService: fraud_model_a_feature_service
+    predictorImage:
+      repository: ghcr.io/example/fraud-model-a
+      tag: latest
+      pullPolicy: IfNotPresent
+    predictorCommand: []
+    predictorArgs: []
+    predictorEnv: []
+  MODEL_B:
+    inferenceServiceName: fraud-model-b
+    kserveUrl: http://fraud-model-b.default/v1/models/fraud-model-b:predict
+    featureService: fraud_model_b_feature_service
+    predictorImage:
+      repository: ghcr.io/example/fraud-model-b
+      tag: latest
+      pullPolicy: IfNotPresent
+    predictorCommand: []
+    predictorArgs: []
+    predictorEnv: []
+
+kserve:
+  enabled: true
+  apiVersion: serving.kserve.io/v1beta1
+  predictorContainerPort: 8080
+  generatedInferenceUrls:
+    enabled: false
+    # Used by the Quarkus service for in-cluster calls when KServe exposes the
+    # InferenceService as a Kubernetes Service.
+    pathTemplate: /v1/models/%s:predict
+  transformer:
+    image:
+      repository: ghcr.io/example/fraud-feature-transformer
+      tag: latest
+      pullPolicy: IfNotPresent
+    feastRepoPath: /feast
+    env: []
+    command: []
+    args: []
+    resources: {}
+
+mockPredictors:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: python
+    tag: 3.11-slim
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  containerPort: 8080
+  resources: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""

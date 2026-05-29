@@ -1,0 +1,65 @@
+{{- if .Values.kserve.enabled -}}
+{{- range $modelName, $model := .Values.models }}
+---
+apiVersion: {{ $.Values.kserve.apiVersion }}
+kind: InferenceService
+metadata:
+  name: {{ $model.inferenceServiceName }}
+  labels:
+    {{- include "fraud-inference-demo.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: kserve-inferenceservice
+    fraud.example.com/model: {{ $modelName | quote }}
+spec:
+  predictor:
+    containers:
+      - name: predictor
+        image: "{{ $model.predictorImage.repository }}:{{ $model.predictorImage.tag }}"
+        imagePullPolicy: {{ $model.predictorImage.pullPolicy }}
+        {{- with $model.predictorCommand }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $model.predictorArgs }}
+        args:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $model.predictorEnv }}
+        env:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        ports:
+          - containerPort: {{ $.Values.kserve.predictorContainerPort }}
+  transformer:
+    containers:
+      - name: transformer
+        image: "{{ $.Values.kserve.transformer.image.repository }}:{{ $.Values.kserve.transformer.image.tag }}"
+        imagePullPolicy: {{ $.Values.kserve.transformer.image.pullPolicy }}
+        {{- with $.Values.kserve.transformer.command }}
+        command:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with $.Values.kserve.transformer.args }}
+        args:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        env:
+          - name: TARGET_MODEL
+            value: {{ $modelName | quote }}
+          - name: FEAST_REPO_PATH
+            value: {{ $.Values.kserve.transformer.feastRepoPath | quote }}
+          - name: {{ $modelName }}_FEATURE_SERVICE
+            valueFrom:
+              configMapKeyRef:
+                name: {{ include "fraud-inference-demo.configName" $ }}
+                key: {{ $modelName }}_FEATURE_SERVICE
+          - name: FEAST_REDIS_CONNECTION_STRING
+            value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" $) $.Values.redis.service.port | quote }}
+          {{- with $.Values.kserve.transformer.env }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        {{- with $.Values.kserve.transformer.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+{{- end }}
+{{- end }}

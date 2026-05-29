@@ -1,0 +1,49 @@
+{{- if .Values.redis.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.redisName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.containerPort }}
+          {{- with .Values.redis.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.redisName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+{{- end }}

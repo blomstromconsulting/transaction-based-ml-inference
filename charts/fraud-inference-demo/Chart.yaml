@@ -1,0 +1,15 @@
+apiVersion: v2
+name: fraud-inference-demo
+description: Transaction-based ML inference demo with Quarkus, Redis, Feast, and KServe.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - quarkus
+  - feast
+  - redis
+  - kserve
+  - fraud-detection
+home: https://github.com/example/transaction-based-ml-inference
+maintainers:
+  - name: Demo Team

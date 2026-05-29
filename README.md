@@ -1,0 +1,463 @@
+# Transaction-Based ML Inference Demo
+
+This repository contains a Kubernetes-deployable Quarkus demo for credit card fraud detection with transaction-driven feature updates, Feast online feature lookup backed by Redis, and KServe model inference with a transformer.
+
+## End-to-end Flow
+
+```text
+Transaction Event
+  -> transaction-events Quarkus service
+  -> validate and normalize
+  -> compute Redis sorted-set rolling aggregates
+  -> materialize aggregate feature rows through Feast feature writer
+  -> Feast writes online features to Redis using its online store format
+  -> trigger KServe InferenceService
+  -> KServe Transformer
+  -> Feast Feature Service lookup
+  -> Feast reads online features from Redis
+  -> Transformer creates model input
+  -> KServe Predictor: Model A or Model B
+  -> fraud score and decision metadata
+  -> fraud decision event is logged/published
+```
+
+## Data Flow Diagram
+
+```mermaid
+flowchart LR
+    event["Incoming transaction event"] --> rest["transaction-events service<br/>REST or messaging adapter"]
+    rest --> app["Application use cases<br/>validate, normalize, orchestrate"]
+    app --> redisAdapter["Redis rolling-window stats adapter"]
+    redisAdapter --> debugRedis[("Redis debug stats<br/>sorted sets + readable hashes")]
+    app --> writer["Feast feature writer<br/>materialize feature rows"]
+    writer --> feastOnline[("Redis Feast online store<br/>Feast internal format")]
+    app --> kserveAdapter["KServe inference adapter"]
+
+    kserveAdapter --> isvc["KServe InferenceService<br/>Model A or Model B"]
+    isvc --> transformer["KServe Transformer<br/>feature enrichment"]
+    transformer --> feast["Feast Feature Service lookup<br/>model-specific feature set"]
+    feast --> feastOnline
+    feastOnline --> feast
+    feast --> transformer
+    transformer --> payload["Enriched model input<br/>transaction fields + online features"]
+    payload --> predictor{"Selected predictor"}
+    predictor --> modelA["Fraud Model A<br/>baseline feature service"]
+    predictor --> modelB["Fraud Model B<br/>extended feature service"]
+    modelA --> result["Fraud score + metadata"]
+    modelB --> result
+    result --> decision["Fraud decision event<br/>APPROVE, REVIEW, or DECLINE"]
+    decision --> publisher["Decision publisher/log"]
+```
+
+## Request Swimlane
+
+This swimlane follows the deployed real Feast/KServe path. Each note shows the main content carried by that request or response.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Client
+    participant TxSvc as transaction-events<br/>Quarkus service
+    participant RedisDebug as Redis<br/>debug aggregates
+    participant Writer as Feast feature writer
+    participant FeastRedis as Redis<br/>Feast online store
+    participant KServe as KServe<br/>InferenceService
+    participant Transformer as KServe Transformer
+    participant Feast as Feast SDK<br/>Feature Service lookup
+    participant Predictor as KServe Predictor<br/>Model A or B
+    participant Publisher as Decision publisher/log
+
+    Client->>TxSvc: POST /transactions
+    Note over Client,TxSvc: TransactionEvent: transaction_id, customer_id, card_id, merchant_id, merchant_category, amount, currency, country, timestamp, requested_model
+
+    TxSvc->>TxSvc: Validate and normalize
+    Note over TxSvc: Normalized model: amount as transaction_amount, country as transaction_country, model defaults if omitted
+
+    TxSvc->>RedisDebug: Update rolling aggregates
+    Note over TxSvc,RedisDebug: Keys: fraud:customer:{customer_id}:tx-events, fraud:customer:{customer_id}:stats, fraud:merchant:{merchant_id}:risk
+
+    TxSvc->>Writer: POST /materialize/customer
+    Note over TxSvc,Writer: CustomerFeatureRow: customer_id, event_timestamp, count_1h, count_24h, total_amount_24h, avg_amount_7d, max_amount_7d, distinct_merchants_24h, cross_border_count_7d
+
+    Writer->>FeastRedis: FeatureStore.write_to_online_store(customer_transaction_stats_view)
+    Note over Writer,FeastRedis: Feast-formatted online values keyed by customer_id
+
+    TxSvc->>Writer: POST /materialize/merchant
+    Note over TxSvc,Writer: MerchantFeatureRow: merchant_id, event_timestamp, merchant_risk_score, merchant_category
+
+    Writer->>FeastRedis: FeatureStore.write_to_online_store(merchant_risk_view)
+    Note over Writer,FeastRedis: Feast-formatted online values keyed by merchant_id
+
+    TxSvc->>KServe: POST /v1/models/{model}:predict
+    Note over TxSvc,KServe: KServe envelope: model, featureService, transaction fields
+
+    KServe->>Transformer: Invoke transformer preprocess
+    Note over Transformer: Resolve Feature Service: MODEL_A -> fraud_model_a_feature_service, MODEL_B -> fraud_model_b_feature_service
+
+    Transformer->>Feast: get_feature_service(featureService)
+    Note over Transformer,Feast: Feature refs come from Feast Feature Service, not hard-coded application logic
+
+    Transformer->>Feast: get_online_features(entity_rows)
+    Note over Transformer,Feast: Entity rows: customer_id and merchant_id
+
+    Feast->>FeastRedis: Read online features
+    FeastRedis-->>Feast: Feature values
+    Feast-->>Transformer: Online feature map
+    Note over Feast,Transformer: Customer stats and optional merchant risk from Redis through Feast
+
+    Transformer->>Predictor: Forward enriched request
+    Note over Transformer,Predictor: instances[0]: transaction_amount, transaction_country, merchant_category, customer stats, merchant_risk_score for Model B
+
+    Predictor-->>Transformer: Prediction response
+    Note over Predictor,Transformer: predictions[0].fraud_score
+
+    Transformer-->>KServe: Fraud response
+    Note over Transformer,KServe: fraudScore, decision, featuresUsed, metadata
+
+    KServe-->>TxSvc: Inference result
+    TxSvc->>Publisher: Publish/log fraud decision
+    Note over TxSvc,Publisher: FraudDecision: transaction_id, model, fraud_score, decision, features_used
+
+    TxSvc-->>Client: 202 Accepted
+    Note over TxSvc,Client: API response: transaction_id, model, fraud_score, decision, features_used
+```
+
+The application service does not hard-code every model feature. It triggers the requested model and passes the configured Feast Feature Service name. Model-specific feature sets live in Feast:
+
+- `fraud_model_a_feature_service`
+- `fraud_model_b_feature_service`
+
+## Architecture
+
+The Java code follows Hexagonal Architecture:
+
+- `domain`: models, input ports, output ports, and domain-only normalization
+- `application`: use case orchestration
+- `adapter.in`: REST and optional messaging entry points
+- `adapter.out`: Redis, Feast, KServe, and decision publishing adapters
+- `infrastructure`: configuration and deployment-related support
+
+The domain layer has no Redis, Feast, KServe, Kafka, HTTP, or Kubernetes dependencies.
+
+## Models and Feature Services
+
+Model A is the baseline model. It combines event-time transaction fields with common customer features:
+
+- `transaction_amount`
+- `transaction_country`
+- `merchant_category`
+- `customer_transaction_count_1h`
+- `customer_transaction_count_24h`
+- `customer_total_amount_24h`
+- `customer_avg_amount_7d`
+
+Model B extends Model A with more customer and merchant features:
+
+- `customer_max_amount_7d`
+- `customer_distinct_merchants_24h`
+- `customer_cross_border_count_7d`
+- `merchant_risk_score`
+
+The Feast repository under [feast](./feast) defines common reusable customer features and composes them into separate Feature Services for each model.
+
+## Redis Aggregation
+
+`RedisCustomerTransactionStatsAdapter` updates demo aggregates using these key patterns:
+
+- `fraud:customer:{customer_id}:tx`
+- `fraud:customer:{customer_id}:stats`
+- `fraud:customer:{customer_id}:tx-events`
+- `fraud:merchant:{merchant_id}:risk`
+
+The adapter uses Redis sorted sets for event-time rolling windows and stores readable hash snapshots for debugging. After computing the aggregate row, the application calls the Feast feature writer, which uses the Feast SDK to write the row to Feast's Redis online store format. The transformer reads features through Feast, not from the application-specific debug keys.
+
+For higher-volume production systems, replace the in-service Redis window calculation with Kafka Streams, Flink, Spark, RedisTimeSeries, or another streaming feature pipeline. Keep the output contract the same: materialize rows through Feast or a Feast-compatible online writer.
+
+## KServe Transformer
+
+The transformer scaffold is in [kserve/transformer](./kserve/transformer). It:
+
+1. Receives the inference request containing the transaction event and target model.
+2. Resolves `MODEL_A` to `fraud_model_a_feature_service` or `MODEL_B` to `fraud_model_b_feature_service`.
+3. Extracts entity keys such as `customer_id` and `merchant_id`.
+4. Calls Feast online serving.
+5. Feast reads Redis-backed online feature values.
+6. Merges transaction fields with online features.
+7. Builds an explicit model input payload.
+8. Lets KServe forward the payload to the predictor.
+9. Converts predictor output into a fraud decision response.
+
+## Configuration
+
+Main config lives in [src/main/resources/application.properties](./src/main/resources/application.properties):
+
+```properties
+fraud.redis.host=redis
+fraud.redis.port=6379
+fraud.feast.url=http://feast-feature-server:6566
+
+fraud.model.MODEL_A.kserve-url=http://fraud-model-a.default/v1/models/fraud-model-a:predict
+fraud.model.MODEL_A.feature-service=fraud_model_a_feature_service
+
+fraud.model.MODEL_B.kserve-url=http://fraud-model-b.default/v1/models/fraud-model-b:predict
+fraud.model.MODEL_B.feature-service=fraud_model_b_feature_service
+```
+
+## Run Locally
+
+Start Redis:
+
+```bash
+docker run --rm -p 6379:6379 redis:7-alpine
+```
+
+Run Quarkus:
+
+```bash
+./mvnw quarkus:dev
+```
+
+If Maven wrapper is not present, use:
+
+```bash
+mvn quarkus:dev
+```
+
+Submit a demo transaction:
+
+```bash
+curl -X POST http://localhost:8080/transactions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "transaction_id": "tx-10001",
+    "customer_id": "cust-123",
+    "card_id": "card-456",
+    "merchant_id": "merchant-789",
+    "merchant_category": "electronics",
+    "amount": 1299.99,
+    "currency": "EUR",
+    "country": "SE",
+    "timestamp": "2026-05-29T12:00:00Z",
+    "requested_model": "MODEL_B"
+  }'
+```
+
+Example response:
+
+```json
+{
+  "transaction_id": "tx-10001",
+  "model": "MODEL_B",
+  "fraud_score": 0.91,
+  "decision": "DECLINE",
+  "features_used": [
+    "transaction_amount",
+    "customer_transaction_count_1h",
+    "customer_transaction_count_24h",
+    "customer_total_amount_24h",
+    "customer_avg_amount_7d",
+    "customer_max_amount_7d",
+    "customer_distinct_merchants_24h",
+    "customer_cross_border_count_7d",
+    "merchant_risk_score"
+  ]
+}
+```
+
+## Example Enrichment
+
+Incoming KServe request:
+
+```json
+{
+  "model": "MODEL_B",
+  "featureService": "fraud_model_b_feature_service",
+  "transaction": {
+    "transaction_id": "tx-10001",
+    "customer_id": "cust-123",
+    "merchant_id": "merchant-789",
+    "transaction_amount": 1299.99,
+    "transaction_country": "SE",
+    "merchant_category": "electronics"
+  }
+}
+```
+
+Transformer model input:
+
+```json
+{
+  "instances": [
+    {
+      "transaction_amount": 1299.99,
+      "transaction_country": "SE",
+      "merchant_category": "electronics",
+      "customer_transaction_count_1h": 3,
+      "customer_transaction_count_24h": 8,
+      "customer_total_amount_24h": 2440.50,
+      "customer_avg_amount_7d": 180.25,
+      "customer_max_amount_7d": 1299.99,
+      "customer_distinct_merchants_24h": 5,
+      "customer_cross_border_count_7d": 1,
+      "merchant_risk_score": 0.72
+    }
+  ]
+}
+```
+
+Predictor response:
+
+```json
+{
+  "predictions": [
+    {
+      "fraud_score": 0.91
+    }
+  ]
+}
+```
+
+## Deploy to Kubernetes
+
+Build and publish images for:
+
+- Quarkus transaction-events service
+- Feast repository image
+- Fraud feature transformer
+- Model A predictor
+- Model B predictor
+
+Then apply manifests:
+
+```bash
+kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/model-feature-config.yaml
+kubectl apply -f k8s/feast-feature-server.yaml
+kubectl apply -f k8s/kserve-model-a.yaml
+kubectl apply -f k8s/kserve-model-b.yaml
+kubectl apply -f k8s/transaction-events.yaml
+```
+
+The KServe manifests illustrate transformer-first inference. Each `InferenceService` attaches the transformer, which performs Feast enrichment before KServe invokes the selected predictor.
+
+## Deploy with Helm
+
+A Helm chart is available in [charts/fraud-inference-demo](./charts/fraud-inference-demo). It deploys the Quarkus service, Redis, Feast feature server, KServe `InferenceService` resources for Model A and Model B, the transformer configuration, and the model-to-Feature-Service ConfigMap.
+
+Render the manifests:
+
+```bash
+helm template fraud-demo ./charts/fraud-inference-demo
+```
+
+Install or upgrade:
+
+```bash
+helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
+  --namespace fraud-demo \
+  --create-namespace
+```
+
+If KServe CRDs are not installed in the target cluster, disable KServe resources while testing the rest of the deployment:
+
+```bash
+helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
+  --namespace fraud-demo \
+  --create-namespace \
+  --set kserve.enabled=false
+```
+
+For a real Feast + KServe deployment path using locally built demo images:
+
+```bash
+docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
+docker build -f feast/Dockerfile -t fraud-feast-repo:local .
+docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
+docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
+
+helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
+  --namespace fraud-demo \
+  --create-namespace \
+  -f ./charts/fraud-inference-demo/values-real-feast-kserve-demo.yaml
+```
+
+The real Feast/KServe example deploys a Feast feature server, Feast feature writer, and KServe transformer. It still uses tiny Python demo predictors for Model A and Model B; replace those with real model-serving images for production-like testing.
+
+After deployment, port-forward the Quarkus service:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-transaction-events 18080:8080
+```
+
+Submit a Model B transaction through the deployed real path:
+
+```bash
+curl -sS -i -X POST http://localhost:18080/transactions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "transaction_id": "tx-real-10006",
+    "customer_id": "cust-123",
+    "card_id": "card-456",
+    "merchant_id": "merchant-789",
+    "merchant_category": "electronics",
+    "amount": 1299.99,
+    "currency": "EUR",
+    "country": "SE",
+    "timestamp": "2026-05-29T12:20:00Z",
+    "requested_model": "MODEL_B"
+  }'
+```
+
+Expected response shape:
+
+```json
+{
+  "model": "MODEL_B",
+  "decision": "DECLINE",
+  "transaction_id": "tx-real-10006",
+  "fraud_score": 0.91,
+  "features_used": [
+    "transaction_amount",
+    "transaction_country",
+    "merchant_category",
+    "customer_transaction_count_1h",
+    "customer_transaction_count_24h",
+    "customer_total_amount_24h",
+    "customer_avg_amount_7d",
+    "customer_max_amount_7d",
+    "customer_distinct_merchants_24h",
+    "customer_cross_border_count_7d",
+    "merchant_risk_score"
+  ]
+}
+```
+
+## Project Structure
+
+```text
+src/main/java/com/example/fraud
+  domain/model
+  domain/port/in
+  domain/port/out
+  domain/service
+  application/usecase
+  adapter/in/rest
+  adapter/in/messaging
+  adapter/out/redis
+  adapter/out/feast
+  adapter/out/kserve
+  adapter/out/event
+  infrastructure/config
+feast
+kserve/transformer
+k8s
+charts/fraud-inference-demo
+```
+
+## Verification
+
+Run unit tests:
+
+```bash
+mvn test
+```

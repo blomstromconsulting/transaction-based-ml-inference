@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-events
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: transaction-events
+  template:
+    metadata:
+      labels:
+        app: transaction-events
+    spec:
+      containers:
+        - name: transaction-events
+          image: ghcr.io/example/transaction-events:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FRAUD_REDIS_HOST
+              value: redis
+            - name: FRAUD_REDIS_PORT
+              value: "6379"
+            - name: FRAUD_FEAST_URL
+              value: http://feast-feature-server:6566
+            - name: FRAUD_MODEL_MODEL_A_KSERVE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_A.kserve-url
+            - name: FRAUD_MODEL_MODEL_A_FEATURE_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_A.feature-service
+            - name: FRAUD_MODEL_MODEL_B_KSERVE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_B.kserve-url
+            - name: FRAUD_MODEL_MODEL_B_FEATURE_SERVICE
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_B.feature-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-events
+spec:
+  selector:
+    app: transaction-events
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

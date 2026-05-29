@@ -1,0 +1,109 @@
+# Example values for a real Feast + KServe deployment using locally built demo images.
+# Build images first:
+#   docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
+#   docker build -f feast/Dockerfile -t fraud-feast-repo:local .
+#   docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
+#
+# This example still uses simple Python demo predictors. Replace those with real
+# model-serving images for a production-like deployment.
+
+transactionEvents:
+  image:
+    repository: transaction-events
+    tag: local
+    pullPolicy: Never
+
+feast:
+  enabled: true
+  image:
+    repository: fraud-feast-repo
+    tag: local
+    pullPolicy: Never
+
+featureWriter:
+  enabled: true
+  image:
+    repository: fraud-feast-writer
+    tag: local
+    pullPolicy: Never
+
+kserve:
+  enabled: true
+  generatedInferenceUrls:
+    enabled: false
+  transformer:
+    image:
+      repository: fraud-feature-transformer
+      tag: local
+      pullPolicy: Never
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+mockPredictors:
+  enabled: false
+
+models:
+  MODEL_A:
+    inferenceServiceName: fraud-model-a
+    kserveUrl: http://fraud-model-a-transformer.fraud-demo.svc.cluster.local/v1/models/fraud-model-a:predict
+    featureService: fraud_model_a_feature_service
+    predictorImage:
+      repository: python
+      tag: 3.11-slim
+      pullPolicy: IfNotPresent
+    predictorCommand:
+      - python
+      - -c
+    predictorArgs:
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload = json.dumps({"predictions": [{"fraud_score": 0.42}]}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            def log_message(self, format, *args):
+                return
+
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    predictorEnv: []
+
+  MODEL_B:
+    inferenceServiceName: fraud-model-b
+    kserveUrl: http://fraud-model-b-transformer.fraud-demo.svc.cluster.local/v1/models/fraud-model-b:predict
+    featureService: fraud_model_b_feature_service
+    predictorImage:
+      repository: python
+      tag: 3.11-slim
+      pullPolicy: IfNotPresent
+    predictorCommand:
+      - python
+      - -c
+    predictorArgs:
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                payload = json.dumps({"predictions": [{"fraud_score": 0.91}]}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            def log_message(self, format, *args):
+                return
+
+        HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    predictorEnv: []

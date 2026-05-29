@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: feast-feature-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: feast-feature-server
+  template:
+    metadata:
+      labels:
+        app: feast-feature-server
+    spec:
+      containers:
+        - name: feast
+          image: ghcr.io/example/fraud-feast-repo:latest
+          imagePullPolicy: IfNotPresent
+          command: ["feast"]
+          args: ["serve", "--host", "0.0.0.0", "--port", "6566"]
+          workingDir: /feast
+          ports:
+            - containerPort: 6566
+          env:
+            - name: REDIS_HOST
+              value: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: feast-feature-server
+spec:
+  selector:
+    app: feast-feature-server
+  ports:
+    - name: http
+      port: 6566
+      targetPort: 6566

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-model-feature-config
+data:
+  fraud.model.MODEL_A.kserve-url: "http://fraud-model-a.default/v1/models/fraud-model-a:predict"
+  fraud.model.MODEL_A.feature-service: "fraud_model_a_feature_service"
+  fraud.model.MODEL_B.kserve-url: "http://fraud-model-b.default/v1/models/fraud-model-b:predict"
+  fraud.model.MODEL_B.feature-service: "fraud_model_b_feature_service"
+  MODEL_A_FEATURE_SERVICE: "fraud_model_a_feature_service"
+  MODEL_B_FEATURE_SERVICE: "fraud_model_b_feature_service"

@@ -1,0 +1,59 @@
+{{- if .Values.feast.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.feastName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: feast-feature-server
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: feast-feature-server
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      containers:
+        - name: feast
+          image: "{{ .Values.feast.image.repository }}:{{ .Values.feast.image.tag }}"
+          imagePullPolicy: {{ .Values.feast.image.pullPolicy }}
+          command:
+            {{- toYaml .Values.feast.command | nindent 12 }}
+          args:
+            {{- toYaml .Values.feast.args | nindent 12 }}
+          workingDir: {{ .Values.feast.workingDir }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.feast.containerPort }}
+          env:
+            - name: REDIS_HOST
+              value: {{ include "fraud-inference-demo.redisName" . | quote }}
+            - name: FEAST_REDIS_CONNECTION_STRING
+              value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" .) .Values.redis.service.port | quote }}
+          {{- with .Values.feast.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.feastName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-server
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: feast-feature-server
+  ports:
+    - name: http
+      port: {{ .Values.feast.service.port }}
+      targetPort: http
+{{- end }}

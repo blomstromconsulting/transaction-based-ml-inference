@@ -1,0 +1,25 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: fraud-model-b
+spec:
+  predictor:
+    containers:
+      - name: predictor
+        image: ghcr.io/example/fraud-model-b:latest
+        ports:
+          - containerPort: 8080
+  transformer:
+    containers:
+      - name: transformer
+        image: ghcr.io/example/fraud-feature-transformer:latest
+        env:
+          - name: TARGET_MODEL
+            value: MODEL_B
+          - name: FEAST_REPO_PATH
+            value: /feast
+          - name: MODEL_B_FEATURE_SERVICE
+            valueFrom:
+              configMapKeyRef:
+                name: fraud-model-feature-config
+                key: MODEL_B_FEATURE_SERVICE
