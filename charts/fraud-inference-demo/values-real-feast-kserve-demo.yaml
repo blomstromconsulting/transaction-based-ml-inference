@@ -19,6 +19,8 @@ feast:
     repository: fraud-feast-repo
     tag: local
     pullPolicy: Never
+  offlineStore:
+    type: postgres
 
 featureWriter:
   enabled: true
@@ -26,6 +28,17 @@ featureWriter:
     repository: fraud-feast-writer
     tag: local
     pullPolicy: Never
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  database: fraud_features
+  user: feast
+  password: feast
+  sslmode: disable
 
 kserve:
   enabled: true

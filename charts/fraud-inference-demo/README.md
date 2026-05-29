@@ -4,6 +4,7 @@ This chart deploys the transaction-based fraud inference demo to Kubernetes:
 
 - Quarkus `transaction-events` service
 - Redis online feature/statistics store
+- Optional Postgres Feast offline store for retraining
 - Feast feature server
 - Feast feature writer for online materialization
 - KServe `InferenceService` resources for Model A and Model B
@@ -72,6 +73,19 @@ helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
 ```
 
 This mode deploys a real Feast feature server, Feast feature writer, and real KServe `InferenceService` resources with the Feast transformer. The example still uses tiny Python predictor containers for Model A and Model B so the chart is runnable without external model images.
+
+The same values file enables Postgres and configures Feast with:
+
+```yaml
+postgres:
+  enabled: true
+
+feast:
+  offlineStore:
+    type: postgres
+```
+
+Redis remains the Feast online store used by the transformer. Postgres is the Feast offline store used by retraining jobs for historical feature retrieval. When Postgres is enabled, the Quarkus service also writes live transaction facts, historical feature rows, and prediction logs to Postgres. Labels still need to be supplied later from fraud outcomes.
 
 For production-like use, replace `models.MODEL_A.predictorImage`, `models.MODEL_B.predictorImage`, `predictorCommand`, and `predictorArgs` with real model-serving images.
 

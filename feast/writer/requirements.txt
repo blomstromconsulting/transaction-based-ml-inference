@@ -1,5 +1,6 @@
 fastapi
 uvicorn[standard]
-feast[redis]==0.63.0
+feast[redis,postgres]==0.63.0
+psycopg-binary==3.2.5
 pandas
 pyyaml

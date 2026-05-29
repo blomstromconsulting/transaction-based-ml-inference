@@ -36,6 +36,22 @@ spec:
               value: {{ include "fraud-inference-demo.redisName" . | quote }}
             - name: FEAST_REDIS_CONNECTION_STRING
               value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" .) .Values.redis.service.port | quote }}
+            - name: FEAST_OFFLINE_STORE_TYPE
+              value: {{ .Values.feast.offlineStore.type | quote }}
+            - name: FEAST_POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: FEAST_POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: FEAST_POSTGRES_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: FEAST_POSTGRES_SCHEMA
+              value: {{ .Values.postgres.schema | quote }}
+            - name: FEAST_POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: FEAST_POSTGRES_PASSWORD
+              value: {{ .Values.postgres.password | quote }}
+            - name: FEAST_POSTGRES_SSLMODE
+              value: {{ .Values.postgres.sslmode | quote }}
           {{- with .Values.feast.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

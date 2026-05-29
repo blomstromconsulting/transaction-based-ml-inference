@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-postgres
+  labels:
+    app: fraud-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fraud-postgres
+  template:
+    metadata:
+      labels:
+        app: fraud-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: fraud_features
+            - name: POSTGRES_USER
+              value: feast
+            - name: POSTGRES_PASSWORD
+              value: feast
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-postgres
+  labels:
+    app: fraud-postgres
+spec:
+  selector:
+    app: fraud-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

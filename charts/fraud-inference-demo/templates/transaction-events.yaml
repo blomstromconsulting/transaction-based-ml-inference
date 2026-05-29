@@ -45,6 +45,14 @@ spec:
               value: {{ .Values.featureWriter.enabled | quote }}
             - name: FRAUD_FEATURE_WRITER_URL
               value: {{ printf "http://%s:%v" (include "fraud-inference-demo.featureWriterName" .) .Values.featureWriter.service.port | quote }}
+            - name: FRAUD_OFFLINE_STORE_ENABLED
+              value: {{ .Values.postgres.enabled | quote }}
+            - name: FRAUD_OFFLINE_STORE_JDBC_URL
+              value: {{ printf "jdbc:postgresql://%s:%v/%s" (include "fraud-inference-demo.postgresName" .) .Values.postgres.service.port .Values.postgres.database | quote }}
+            - name: FRAUD_OFFLINE_STORE_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: FRAUD_OFFLINE_STORE_PASSWORD
+              value: {{ .Values.postgres.password | quote }}
 {{- range $modelName, $model := .Values.models }}
             - name: FRAUD_MODEL_{{ $modelName }}_KSERVE_URL
               valueFrom:

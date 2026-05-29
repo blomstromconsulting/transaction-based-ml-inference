@@ -1,23 +1,42 @@
 from datetime import timedelta
+import os
 
 from feast import Field, FeatureView, FileSource
 from feast.types import Float32, Float64, Int64, String
 
 from entities import customer, merchant
 
-# Placeholder batch sources document schemas for Feast apply/materialize.
-# The online values are written to Redis by the transaction-events service in this demo.
-customer_stats_source = FileSource(
-    name="customer_stats_source",
-    path="data/customer_stats.parquet",
-    timestamp_field="event_timestamp",
-)
 
-merchant_risk_source = FileSource(
-    name="merchant_risk_source",
-    path="data/merchant_risk.parquet",
-    timestamp_field="event_timestamp",
-)
+if os.getenv("FEAST_OFFLINE_STORE_TYPE", "file").lower() == "postgres":
+    from feast.infra.offline_stores.contrib.postgres_offline_store.postgres_source import PostgreSQLSource
+
+    customer_stats_source = PostgreSQLSource(
+        name="customer_stats_source",
+        table="customer_transaction_stats",
+        timestamp_field="event_timestamp",
+        created_timestamp_column="created_timestamp",
+    )
+
+    merchant_risk_source = PostgreSQLSource(
+        name="merchant_risk_source",
+        table="merchant_risk_features",
+        timestamp_field="event_timestamp",
+        created_timestamp_column="created_timestamp",
+    )
+else:
+    # Placeholder batch sources document schemas for local Feast apply/materialize.
+    # The online values are written to Redis by the transaction-events service in this demo.
+    customer_stats_source = FileSource(
+        name="customer_stats_source",
+        path="data/customer_stats.parquet",
+        timestamp_field="event_timestamp",
+    )
+
+    merchant_risk_source = FileSource(
+        name="merchant_risk_source",
+        path="data/merchant_risk.parquet",
+        timestamp_field="event_timestamp",
+    )
 
 customer_transaction_stats_view = FeatureView(
     name="customer_transaction_stats_view",

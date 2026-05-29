@@ -4,6 +4,7 @@ Apply order for the demo:
 
 ```bash
 kubectl apply -f k8s/redis.yaml
+kubectl apply -f k8s/postgres.yaml
 kubectl apply -f k8s/model-feature-config.yaml
 kubectl apply -f k8s/feast-feature-server.yaml
 kubectl apply -f k8s/kserve-model-a.yaml

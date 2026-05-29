@@ -4,13 +4,20 @@ This repository contains a Kubernetes-deployable Quarkus demo for credit card fr
 
 ## End-to-end Flow
 
+The deployed demo has two data paths:
+
+- **Online inference path**: update rolling features, materialize them to Feast's Redis online store, enrich the KServe request, and score the transaction.
+- **Offline training path**: persist normalized transactions, historical feature rows, and model decisions to Postgres so labels can be joined later for retraining.
+
 ```text
 Transaction Event
   -> transaction-events Quarkus service
   -> validate and normalize
   -> compute Redis sorted-set rolling aggregates
+  -> write normalized transaction facts to Postgres offline store
   -> materialize aggregate feature rows through Feast feature writer
   -> Feast writes online features to Redis using its online store format
+  -> write historical customer and merchant feature rows to Postgres offline store
   -> trigger KServe InferenceService
   -> KServe Transformer
   -> Feast Feature Service lookup
@@ -19,6 +26,7 @@ Transaction Event
   -> KServe Predictor: Model A or Model B
   -> fraud score and decision metadata
   -> fraud decision event is logged/published
+  -> write prediction audit row to Postgres offline store
 ```
 
 ## Data Flow Diagram
@@ -27,10 +35,15 @@ Transaction Event
 flowchart LR
     event["Incoming transaction event"] --> rest["transaction-events service<br/>REST or messaging adapter"]
     rest --> app["Application use cases<br/>validate, normalize, orchestrate"]
+
+    app --> offlineTx[("Postgres offline store<br/>fraud_transactions")]
+    offlineTx -. "later joined with labels" .-> labels[("fraud_labels<br/>chargebacks, disputes, review")]
+
     app --> redisAdapter["Redis rolling-window stats adapter"]
     redisAdapter --> debugRedis[("Redis debug stats<br/>sorted sets + readable hashes")]
     app --> writer["Feast feature writer<br/>materialize feature rows"]
     writer --> feastOnline[("Redis Feast online store<br/>Feast internal format")]
+    app --> offlineFeatures[("Postgres offline store<br/>customer_transaction_stats<br/>merchant_risk_features")]
     app --> kserveAdapter["KServe inference adapter"]
 
     kserveAdapter --> isvc["KServe InferenceService<br/>Model A or Model B"]
@@ -47,17 +60,23 @@ flowchart LR
     modelB --> result
     result --> decision["Fraud decision event<br/>APPROVE, REVIEW, or DECLINE"]
     decision --> publisher["Decision publisher/log"]
+    publisher --> offlinePredictions[("Postgres offline store<br/>fraud_prediction_logs")]
+
+    labels --> training["Feast historical retrieval<br/>point-in-time training set"]
+    offlineFeatures --> training
+    training --> retrain["Train/evaluate candidate model"]
 ```
 
 ## Request Swimlane
 
-This swimlane follows the deployed real Feast/KServe path. Each note shows the main content carried by that request or response.
+This swimlane follows the deployed real Feast, KServe, Redis, and Postgres path. Each note shows the main content carried by the request or persisted at that step.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Client as Client
     participant TxSvc as transaction-events<br/>Quarkus service
+    participant Offline as Postgres<br/>offline store
     participant RedisDebug as Redis<br/>debug aggregates
     participant Writer as Feast feature writer
     participant FeastRedis as Redis<br/>Feast online store
@@ -73,6 +92,9 @@ sequenceDiagram
     TxSvc->>TxSvc: Validate and normalize
     Note over TxSvc: Normalized model: amount as transaction_amount, country as transaction_country, model defaults if omitted
 
+    TxSvc->>Offline: INSERT fraud_transactions
+    Note over TxSvc,Offline: Historical fact row: transaction_id, customer_id, card_id, merchant_id, merchant_category, amount, currency, country, event_timestamp
+
     TxSvc->>RedisDebug: Update rolling aggregates
     Note over TxSvc,RedisDebug: Keys: fraud:customer:{customer_id}:tx-events, fraud:customer:{customer_id}:stats, fraud:merchant:{merchant_id}:risk
 
@@ -80,13 +102,19 @@ sequenceDiagram
     Note over TxSvc,Writer: CustomerFeatureRow: customer_id, event_timestamp, count_1h, count_24h, total_amount_24h, avg_amount_7d, max_amount_7d, distinct_merchants_24h, cross_border_count_7d
 
     Writer->>FeastRedis: FeatureStore.write_to_online_store(customer_transaction_stats_view)
-    Note over Writer,FeastRedis: Feast-formatted online values keyed by customer_id
+    Note over Writer,FeastRedis: Feast-formatted online values keyed by customer_id, including event_timestamp and created_timestamp
+
+    TxSvc->>Offline: UPSERT customer_transaction_stats
+    Note over TxSvc,Offline: Same customer feature row persisted for historical retrieval and retraining
 
     TxSvc->>Writer: POST /materialize/merchant
     Note over TxSvc,Writer: MerchantFeatureRow: merchant_id, event_timestamp, merchant_risk_score, merchant_category
 
     Writer->>FeastRedis: FeatureStore.write_to_online_store(merchant_risk_view)
-    Note over Writer,FeastRedis: Feast-formatted online values keyed by merchant_id
+    Note over Writer,FeastRedis: Feast-formatted online values keyed by merchant_id, including event_timestamp and created_timestamp
+
+    TxSvc->>Offline: UPSERT merchant_risk_features
+    Note over TxSvc,Offline: Merchant feature row persisted for model training and audit
 
     TxSvc->>KServe: POST /v1/models/{model}:predict
     Note over TxSvc,KServe: KServe envelope: model, featureService, transaction fields
@@ -118,9 +146,18 @@ sequenceDiagram
     TxSvc->>Publisher: Publish/log fraud decision
     Note over TxSvc,Publisher: FraudDecision: transaction_id, model, fraud_score, decision, features_used
 
+    TxSvc->>Offline: INSERT fraud_prediction_logs
+    Note over TxSvc,Offline: Prediction audit row: transaction_id, model, fraud_score, decision, features_used, created_timestamp
+
     TxSvc-->>Client: 202 Accepted
     Note over TxSvc,Client: API response: transaction_id, model, fraud_score, decision, features_used
 ```
+
+The online path and offline path intentionally store different shapes:
+
+- Redis debug keys are application-readable rolling-window state for the demo aggregator.
+- Redis Feast online-store keys are owned by Feast and are read by the KServe transformer through Feast APIs.
+- Postgres stores historical facts, feature rows, labels, and prediction logs for retraining and audit.
 
 The application service does not hard-code every model feature. It triggers the requested model and passes the configured Feast Feature Service name. Model-specific feature sets live in Feast:
 
@@ -383,6 +420,19 @@ helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
 
 The real Feast/KServe example deploys a Feast feature server, Feast feature writer, and KServe transformer. It still uses tiny Python demo predictors for Model A and Model B; replace those with real model-serving images for production-like testing.
 
+The same values file also enables Postgres as the Feast offline store for retraining examples:
+
+```yaml
+postgres:
+  enabled: true
+
+feast:
+  offlineStore:
+    type: postgres
+```
+
+Postgres stores historical transactions, historical feature values, and prediction logs written by the Quarkus application. Fraud labels still arrive later from chargebacks, disputes, manual review, or another outcome system. Redis remains the online store used by low-latency inference.
+
 After deployment, port-forward the Quarkus service:
 
 ```bash
@@ -449,10 +499,85 @@ src/main/java/com/example/fraud
   adapter/out/event
   infrastructure/config
 feast
+training
 kserve/transformer
 k8s
 charts/fraud-inference-demo
 ```
+
+## Offline Retraining With Postgres
+
+The online inference path needs Redis, but retraining needs an offline store with historical facts and labels. This demo uses Postgres as the Feast offline store for that path.
+
+When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` service writes live inference traffic into Postgres:
+
+- normalized transaction facts into `fraud_transactions`
+- customer aggregate feature rows into `customer_transaction_stats`
+- merchant risk feature rows into `merchant_risk_features`
+- model scores, decisions, and feature names into `fraud_prediction_logs`
+
+The application does not create fraud labels. Labels are delayed outcomes and must be loaded into `fraud_labels` from review, chargeback, or dispute systems before a transaction can be used as a supervised training example.
+
+The training schema in [training/sql/schema.sql](./training/sql/schema.sql) defines:
+
+- `fraud_transactions`: historical transaction facts.
+- `fraud_labels`: confirmed fraud or legitimate outcomes.
+- `customer_transaction_stats`: historical customer aggregate features.
+- `merchant_risk_features`: historical merchant features.
+- `fraud_prediction_logs`: optional model score and decision audit records.
+- `fraud_training_examples`: transaction and label view used as the Feast entity dataframe.
+
+For a standalone local retraining demo, load sample labeled data into Postgres:
+
+```bash
+docker run --rm --name fraud-postgres \
+  -p 5432:5432 \
+  -e POSTGRES_DB=fraud_features \
+  -e POSTGRES_USER=feast \
+  -e POSTGRES_PASSWORD=feast \
+  postgres:16-alpine
+
+python -m venv .venv-training
+source .venv-training/bin/activate
+pip install -r training/requirements.txt
+
+TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
+python training/scripts/load_sample_data.py
+```
+
+Build a point-in-time correct Feast training dataset:
+
+```bash
+FEAST_OFFLINE_STORE_TYPE=postgres \
+FEAST_POSTGRES_HOST=localhost \
+FEAST_POSTGRES_PORT=5432 \
+FEAST_POSTGRES_DATABASE=fraud_features \
+FEAST_POSTGRES_USER=feast \
+FEAST_POSTGRES_PASSWORD=feast \
+FEAST_POSTGRES_SSLMODE=disable \
+python feast/scripts/render_feature_store.py
+
+FEAST_OFFLINE_STORE_TYPE=postgres \
+python training/scripts/build_training_dataset.py \
+  --model MODEL_B \
+  --output training/output/model_b_training.parquet
+```
+
+Train and classify expected outcomes for the training set:
+
+```bash
+python training/scripts/train_model.py \
+  --model MODEL_B \
+  --input training/output/model_b_training.parquet \
+  --output training/output/model_b.joblib
+
+python training/scripts/evaluate.py \
+  --model-artifact training/output/model_b.joblib \
+  --input training/output/model_b_training.parquet \
+  --output training/output/model_b_classified.parquet
+```
+
+The classified dataset adds `fraud_score`, `expected_decision`, and `expected_is_fraud`. Compare those columns with `is_fraud` to measure precision, recall, PR-AUC, false positives, and false negatives before promoting a new model to KServe.
 
 ## Verification
 

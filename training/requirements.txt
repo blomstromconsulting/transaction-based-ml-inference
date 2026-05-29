@@ -1,0 +1,6 @@
+pandas
+pyarrow
+feast[postgres,redis]==0.63.0
+psycopg-binary==3.2.5
+scikit-learn
+joblib

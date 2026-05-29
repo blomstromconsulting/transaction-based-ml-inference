@@ -33,6 +33,26 @@ redis:
   containerPort: 6379
   resources: {}
 
+postgres:
+  enabled: false
+  fullnameOverride: ""
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  containerPort: 5432
+  database: fraud_features
+  user: feast
+  password: feast
+  schema: public
+  sslmode: disable
+  persistence:
+    enabled: false
+    size: 1Gi
+  resources: {}
+
 feast:
   enabled: true
   image:
@@ -48,6 +68,8 @@ feast:
     - -c
   args:
     - python scripts/render_feature_store.py && feast apply && feast serve --host 0.0.0.0 --port 6566
+  offlineStore:
+    type: file
   resources: {}
 
 featureWriter:

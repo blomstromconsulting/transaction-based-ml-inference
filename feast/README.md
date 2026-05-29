@@ -31,6 +31,26 @@ docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 
 At runtime, `scripts/render_feature_store.py` sets the Redis online store connection from `FEAST_REDIS_CONNECTION_STRING` before running `feast apply` and `feast serve`.
 
+For retraining, the same Feast repository can use Postgres as the offline store:
+
+```bash
+FEAST_OFFLINE_STORE_TYPE=postgres \
+FEAST_POSTGRES_HOST=localhost \
+FEAST_POSTGRES_PORT=5432 \
+FEAST_POSTGRES_DATABASE=fraud_features \
+FEAST_POSTGRES_USER=feast \
+FEAST_POSTGRES_PASSWORD=feast \
+FEAST_POSTGRES_SSLMODE=disable \
+python feast/scripts/render_feature_store.py
+```
+
+When `FEAST_OFFLINE_STORE_TYPE=postgres`, `feature_views.py` uses `PostgreSQLSource` tables:
+
+- `customer_transaction_stats`
+- `merchant_risk_features`
+
+Redis remains the online store; Postgres is used for historical, point-in-time training retrieval.
+
 The feature writer exposes:
 
 - `POST /materialize/customer`

@@ -17,12 +17,27 @@ config["online_store"]["connection_string"] = os.getenv(
     config["online_store"].get("connection_string", "redis:6379"),
 )
 
+offline_store_type = os.getenv("FEAST_OFFLINE_STORE_TYPE", config.get("offline_store", {}).get("type", "file")).lower()
+if offline_store_type == "postgres":
+    config["offline_store"] = {
+        "type": "postgres",
+        "host": os.getenv("FEAST_POSTGRES_HOST", "postgres"),
+        "port": int(os.getenv("FEAST_POSTGRES_PORT", "5432")),
+        "database": os.getenv("FEAST_POSTGRES_DATABASE", "fraud_features"),
+        "db_schema": os.getenv("FEAST_POSTGRES_SCHEMA", "public"),
+        "user": os.getenv("FEAST_POSTGRES_USER", "feast"),
+        "password": os.getenv("FEAST_POSTGRES_PASSWORD", "feast"),
+        "sslmode": os.getenv("FEAST_POSTGRES_SSLMODE", "disable"),
+    }
+else:
+    config["offline_store"] = {"type": "file"}
+
 feature_store.write_text(yaml.safe_dump(config, sort_keys=False))
 
 data_dir.mkdir(exist_ok=True)
 
 customer_stats = data_dir / "customer_stats.parquet"
-if not customer_stats.exists():
+if offline_store_type != "postgres" and not customer_stats.exists():
     pd.DataFrame(
         [
             {
@@ -40,7 +55,7 @@ if not customer_stats.exists():
     ).to_parquet(customer_stats, index=False)
 
 merchant_risk = data_dir / "merchant_risk.parquet"
-if not merchant_risk.exists():
+if offline_store_type != "postgres" and not merchant_risk.exists():
     pd.DataFrame(
         [
             {

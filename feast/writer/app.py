@@ -61,4 +61,5 @@ def _dataframe(row: dict[str, Any]) -> pd.DataFrame:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     normalized["event_timestamp"] = timestamp
+    normalized["created_timestamp"] = datetime.now(timezone.utc)
     return pd.DataFrame([normalized])

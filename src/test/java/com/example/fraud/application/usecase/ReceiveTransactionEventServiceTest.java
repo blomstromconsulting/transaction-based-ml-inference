@@ -11,6 +11,7 @@ import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
 import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
 import com.example.fraud.domain.port.out.FraudDecisionPublisherPort;
 import com.example.fraud.domain.port.out.FeatureMaterializationPort;
+import com.example.fraud.domain.port.out.OfflineTrainingDataPort;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -27,6 +28,7 @@ class ReceiveTransactionEventServiceTest {
     void updatesStatsTriggersInferenceAndPublishesDecision() {
         AtomicBoolean statsUpdated = new AtomicBoolean(false);
         AtomicBoolean featuresMaterialized = new AtomicBoolean(false);
+        AtomicBoolean offlineRecorded = new AtomicBoolean(false);
         AtomicBoolean published = new AtomicBoolean(false);
 
         UpdateCustomerTransactionStatsUseCase statsUseCase = event -> {
@@ -45,17 +47,40 @@ class ReceiveTransactionEventServiceTest {
                 featuresMaterialized.set(true);
             }
         };
+        OfflineTrainingDataPort offlineTrainingDataPort = new OfflineTrainingDataPort() {
+            @Override
+            public void recordTransaction(TransactionEvent event) {
+                offlineRecorded.set(true);
+            }
+
+            @Override
+            public void recordCustomerFeatures(com.example.fraud.domain.model.CustomerFeatureRow row) {
+                offlineRecorded.set(true);
+            }
+
+            @Override
+            public void recordMerchantFeatures(com.example.fraud.domain.model.MerchantFeatureRow row) {
+                offlineRecorded.set(true);
+            }
+
+            @Override
+            public void recordPrediction(FraudDecision decision) {
+                offlineRecorded.set(true);
+            }
+        };
         FraudDecisionPublisherPort publisher = decision -> published.set(true);
 
         ReceiveTransactionEventService service = new ReceiveTransactionEventService(
                 statsUseCase,
                 featureMaterializationPort,
+                offlineTrainingDataPort,
                 inferenceUseCase,
                 publisher);
         FraudDecision decision = service.receive(event());
 
         assertTrue(statsUpdated.get());
         assertTrue(featuresMaterialized.get());
+        assertTrue(offlineRecorded.get());
         assertTrue(published.get());
         assertEquals("tx-10001", decision.transactionId());
         assertEquals(FraudDecisionType.DECLINE, decision.decision());

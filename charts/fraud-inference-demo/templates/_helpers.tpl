@@ -60,6 +60,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- printf "%s-feast-feature-writer" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "fraud-inference-demo.postgresName" -}}
+{{- if .Values.postgres.fullnameOverride -}}
+{{- .Values.postgres.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-postgres" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "fraud-inference-demo.configName" -}}
 {{- printf "%s-model-feature-config" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
