@@ -17,15 +17,18 @@ public class ModelInputBuilder {
         this.strictValidation = strictValidation;
     }
 
-    public Map<String, Object> build(Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
+    public Map<String, Object> build(
+            Map<String, Object> transaction,
+            Map<String, Object> onlineFeatures,
+            List<String> expectedOnlineFeatures) {
         validateTransaction(transaction);
-        validateOnlineFeatures(transaction, onlineFeatures);
+        validateOnlineFeatures(transaction, onlineFeatures, expectedOnlineFeatures);
 
         Map<String, Object> modelInput = new LinkedHashMap<>();
         modelInput.put("transaction_amount", transaction.get("transaction_amount"));
         modelInput.put("transaction_country", transaction.get("transaction_country"));
         modelInput.put("merchant_category", transaction.get("merchant_category"));
-        onlineFeatures.forEach((name, value) -> {
+        expectedOnlineFeatures.forEach(name -> {
             if (ModelFeatureSchema.isModelInputOnlineFeature(name)) {
                 modelInput.put(name, feature(onlineFeatures, name, 0));
             }
@@ -54,19 +57,21 @@ public class ModelInputBuilder {
         }
     }
 
-    private void validateOnlineFeatures(Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
+    private void validateOnlineFeatures(
+            Map<String, Object> transaction,
+            Map<String, Object> onlineFeatures,
+            List<String> expectedOnlineFeatures) {
         if (!strictValidation) {
             return;
         }
-        List<String> missing = onlineFeatures.entrySet().stream()
-                .filter(entry -> ModelFeatureSchema.isModelInputOnlineFeature(entry.getKey()))
-                .filter(entry -> isMissingOnlineFeature(entry.getValue()))
-                .map(Map.Entry::getKey)
+        List<String> missing = expectedOnlineFeatures.stream()
+                .filter(ModelFeatureSchema::isModelInputOnlineFeature)
+                .filter(feature -> !onlineFeatures.containsKey(feature) || isMissingOnlineFeature(onlineFeatures.get(feature)))
                 .toList();
-        if (onlineFeatures.isEmpty() || !missing.isEmpty()) {
+        if (!missing.isEmpty()) {
             throw new FeatureValidationException(
                     "Missing required online features from Feast: "
-                            + (missing.isEmpty() ? "<empty feature response>" : String.join(", ", missing))
+                            + String.join(", ", missing)
                             + "; transaction_id=" + transaction.getOrDefault("transaction_id", "<unknown>")
                             + "; customer_id=" + transaction.getOrDefault("customer_id", "<unknown>")
                             + "; merchant_id=" + transaction.getOrDefault("merchant_id", "<unknown>"));

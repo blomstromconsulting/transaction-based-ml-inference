@@ -98,7 +98,7 @@ python training/scripts/build_training_dataset.py \
   --output training/output/model_b_training.parquet
 ```
 
-Train and evaluate a candidate model:
+Train and evaluate a candidate model. The script sorts by `event_timestamp`, trains on the oldest 70% of rows, and evaluates on the newest 30% so the demo avoids random-split leakage:
 
 ```bash
 python training/scripts/train_model.py \

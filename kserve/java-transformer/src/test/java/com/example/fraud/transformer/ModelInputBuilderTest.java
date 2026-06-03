@@ -18,7 +18,19 @@ class ModelInputBuilderTest {
 
         FeatureValidationException exception = assertThrows(
                 FeatureValidationException.class,
-                () -> builder.build(transaction(), features));
+                () -> builder.build(transaction(), features, ModelFeatureSchema.onlineFeaturesForModel("MODEL_B")));
+
+        assertEquals(true, exception.getMessage().contains("merchant_risk_score"));
+    }
+
+    @Test
+    void failsWhenFeatureServiceOmitsRequiredFeature() {
+        Map<String, Object> features = completeFeatures();
+        features.remove("merchant_risk_score");
+
+        FeatureValidationException exception = assertThrows(
+                FeatureValidationException.class,
+                () -> builder.build(transaction(), features, ModelFeatureSchema.onlineFeaturesForModel("MODEL_B")));
 
         assertEquals(true, exception.getMessage().contains("merchant_risk_score"));
     }
@@ -30,14 +42,17 @@ class ModelInputBuilderTest {
 
         FeatureValidationException exception = assertThrows(
                 FeatureValidationException.class,
-                () -> builder.build(transaction, completeFeatures()));
+                () -> builder.build(transaction, completeFeatures(), ModelFeatureSchema.onlineFeaturesForModel("MODEL_B")));
 
         assertEquals(true, exception.getMessage().contains("customer_id"));
     }
 
     @Test
     void buildsModelBInputWhenAllRequiredValuesExist() {
-        Map<String, Object> input = builder.build(transaction(), completeFeatures());
+        Map<String, Object> input = builder.build(
+                transaction(),
+                completeFeatures(),
+                ModelFeatureSchema.onlineFeaturesForModel("MODEL_B"));
 
         assertEquals(1299.99, input.get("transaction_amount"));
         assertEquals(0.72, input.get("merchant_risk_score"));

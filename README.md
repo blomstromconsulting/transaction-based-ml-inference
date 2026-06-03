@@ -97,7 +97,7 @@ sequenceDiagram
     Note over TxSvc,Offline: Historical fact row: transaction_id, customer_id, card_id, merchant_id, merchant_category, amount, currency, country, event_timestamp
 
     TxSvc->>FeatureState: Update and snapshot online feature state
-    Note over TxSvc,FeatureState: Keys: fraud:feature-state:customer:{customer_id}:tx-events and merchant visit day buckets
+    Note over TxSvc,FeatureState: Keys: fraud:feature-state:customer:{customer_id}:tx-events, tx-details, and merchant visit day buckets
 
     TxSvc->>Writer: POST /materialize/customer
     Note over TxSvc,Writer: CustomerFeatureRow: rolling counts, amounts, cross-border stats, merchant visit counts/rank/top/new-merchant features
@@ -211,14 +211,15 @@ The Feast repository under [feast](./feast) defines common reusable customer fea
 
 ## Redis Online Feature State
 
-`RedisCustomerTransactionStatsAdapter` implements `OnlineFeatureStatePort`. It stores functional online feature state, not debug-only data. The current implementation uses these key patterns:
+`RedisOnlineFeatureStateAdapter` implements `OnlineFeatureStatePort`. It stores functional online feature state, not debug-only data. The current implementation uses these key patterns:
 
 - `fraud:feature-state:customer:{customer_id}:tx-events`
+- `fraud:feature-state:customer:{customer_id}:tx-details`
 - `fraud:feature-state:customer:{customer_id}:merchant-counts:{yyyy-mm-dd}`
 - `fraud:feature-state:customer:{customer_id}:merchant-first-seen:{yyyy-mm-dd}`
 - `fraud:feature-state:customer:{customer_id}:merchant-last-seen:{yyyy-mm-dd}`
 
-The adapter uses a Redis sorted set for event-time rolling transaction windows and bucketed hashes for configurable merchant-visit windows. The default merchant visit window is 30 days and can be configured with `fraud.features.merchant-visit-window-days`; changing that value changes feature semantics and should be coordinated with the model version using those features.
+The adapter uses a Redis sorted set plus transaction detail hash for event-time rolling transaction windows and bucketed hashes for configurable merchant-visit windows. Rolling-window updates use transaction-id idempotency markers so a retried transaction is not counted twice. The default merchant visit window is 30 days and can be configured with `fraud.features.merchant-visit-window-days`; changing that value changes feature semantics and should be coordinated with the model version using those features.
 
 Merchant-visit features are calculated from prior state before the current transaction is added to the merchant visit bucket. This preserves novelty signals such as `is_new_merchant_for_customer`. After computing the feature row, the application calls the Feast feature writer, which uses the Feast SDK to write the row to Feast's Redis online store format. The transformer reads features through Feast, not directly from the Redis feature-state keys.
 
@@ -607,6 +608,15 @@ Expected response shape:
     "customer_max_amount_7d",
     "customer_distinct_merchants_24h",
     "customer_cross_border_count_7d",
+    "current_merchant_visit_count_30d",
+    "current_merchant_visit_share_30d",
+    "current_merchant_rank_30d",
+    "is_current_merchant_top_visited_30d",
+    "days_since_first_seen_current_merchant",
+    "days_since_last_seen_current_merchant",
+    "customer_distinct_merchants_30d",
+    "is_new_merchant_for_customer",
+    "top_visited_merchant_id_30d",
     "merchant_risk_score"
   ]
 }
@@ -736,7 +746,7 @@ python training/scripts/build_training_dataset.py \
   --output training/output/model_b_training.parquet
 ```
 
-Train and classify expected outcomes for the training set:
+Train and classify expected outcomes for the training set. The training script sorts by `event_timestamp` and uses the oldest 70% of rows for training and the newest 30% for testing so the demo evaluation follows the same time-aware assumption as Feast historical retrieval:
 
 ```bash
 python training/scripts/train_model.py \

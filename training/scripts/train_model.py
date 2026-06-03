@@ -6,7 +6,6 @@ import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, classification_report, roc_auc_score
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -33,15 +32,11 @@ def main() -> None:
     X = df[columns["numeric"] + columns["categorical"]]
     y = df["is_fraud"]
 
-    stratify = y if y.nunique() > 1 and y.value_counts().min() > 1 else None
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.30,
-        random_state=42,
-        shuffle=True,
-        stratify=stratify,
-    )
+    if len(df) < 2:
+        raise ValueError("Training requires at least two labeled rows for a time-based train/test split")
+    split_index = max(1, min(len(df) - 1, int(len(df) * 0.70)))
+    X_train, X_test = X.iloc[:split_index], X.iloc[split_index:]
+    y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 
     preprocessor = ColumnTransformer(
         transformers=[

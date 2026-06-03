@@ -28,12 +28,24 @@ import java.util.Map;
 import java.util.Set;
 
 @ApplicationScoped
-public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStatePort {
+public class RedisOnlineFeatureStateAdapter implements OnlineFeatureStatePort {
     private static final Duration STATS_TTL = Duration.ofDays(8);
     private static final Duration WINDOW_1H = Duration.ofHours(1);
     private static final Duration WINDOW_24H = Duration.ofHours(24);
     private static final Duration WINDOW_7D = Duration.ofDays(7);
     private static final int MERCHANT_VISIT_GRACE_DAYS = 2;
+    private static final String ROLLING_TRANSACTION_UPDATE_SCRIPT = """
+            if redis.call('SETNX', KEYS[3], ARGV[1]) == 0 then
+              return 0
+            end
+            redis.call('EXPIRE', KEYS[3], ARGV[5])
+            redis.call('HSET', KEYS[2], ARGV[1], ARGV[4])
+            redis.call('ZADD', KEYS[1], 'NX', ARGV[2], ARGV[1])
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[3])
+            redis.call('EXPIRE', KEYS[1], ARGV[5])
+            redis.call('EXPIRE', KEYS[2], ARGV[5])
+            return 1
+            """;
     private static final String MERCHANT_BUCKET_UPDATE_SCRIPT = """
             if redis.call('SETNX', KEYS[4], ARGV[2]) == 0 then
               return 0
@@ -58,7 +70,7 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
     private final String homeCountry;
     private final int merchantVisitWindowDays;
 
-    public RedisCustomerTransactionStatsAdapter(
+    public RedisOnlineFeatureStateAdapter(
             Redis redis,
             @ConfigProperty(name = "fraud.features.home-country", defaultValue = "SE") String homeCountry,
             @ConfigProperty(name = "fraud.features.merchant-visit-window-days", defaultValue = "30")
@@ -82,30 +94,35 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
     }
 
     private CustomerTransactionStats updateRollingStats(TransactionEvent event) {
-        String eventKey = "fraud:feature-state:customer:%s:tx-events".formatted(event.customerId());
+        String eventKey = rollingEventKey(event.customerId());
+        String detailKey = rollingDetailKey(event.customerId());
 
         BigDecimal amount = event.amount();
         long amountCents = amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
         long eventTime = event.timestamp().toEpochMilli();
-        String member = "%s\t%d\t%s\t%s".formatted(
-                event.transactionId(),
-                amountCents,
-                event.merchantId(),
-                event.country());
+        String detail = "%d\t%s\t%s".formatted(amountCents, event.merchantId(), event.country());
+        long oldestRetainedExclusive = event.timestamp().minus(WINDOW_7D).toEpochMilli() - 1;
+        int ttlSeconds = Math.toIntExact(STATS_TTL.toSeconds());
 
-        send(Request.cmd(Command.ZADD).arg(eventKey).arg("NX").arg(eventTime).arg(member));
-        long oldestRetained = event.timestamp().minus(WINDOW_7D).toEpochMilli();
-        send(Request.cmd(Command.ZREMRANGEBYSCORE).arg(eventKey).arg(0).arg(oldestRetained - 1));
+        send(Request.cmd(Command.EVAL)
+                .arg(ROLLING_TRANSACTION_UPDATE_SCRIPT)
+                .arg(3)
+                .arg(eventKey)
+                .arg(detailKey)
+                .arg(rollingTransactionMarkerKey(event.transactionId()))
+                .arg(event.transactionId())
+                .arg(eventTime)
+                .arg(oldestRetainedExclusive)
+                .arg(detail)
+                .arg(ttlSeconds));
 
-        expire(eventKey, STATS_TTL);
-
-        return computeStats(eventKey, event.timestamp());
+        return computeStats(eventKey, detailKey, event.timestamp());
     }
 
-    private CustomerTransactionStats computeStats(String eventKey, Instant timestamp) {
+    private CustomerTransactionStats computeStats(String eventKey, String detailKey, Instant timestamp) {
         long count1h = zcount(eventKey, timestamp.minus(WINDOW_1H), timestamp);
-        WindowStats stats24h = readWindowStats(eventKey, timestamp.minus(WINDOW_24H), timestamp);
-        WindowStats stats7d = readWindowStats(eventKey, timestamp.minus(WINDOW_7D), timestamp);
+        WindowStats stats24h = readWindowStats(eventKey, detailKey, timestamp.minus(WINDOW_24H), timestamp);
+        WindowStats stats7d = readWindowStats(eventKey, detailKey, timestamp.minus(WINDOW_7D), timestamp);
 
         long count24h = stats24h.count();
         long count7d = Math.max(1L, stats7d.count());
@@ -126,9 +143,9 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
         return response == null ? 0L : response.toLong();
     }
 
-    private WindowStats readWindowStats(String key, Instant fromInclusive, Instant toInclusive) {
+    private WindowStats readWindowStats(String eventKey, String detailKey, Instant fromInclusive, Instant toInclusive) {
         Response response = send(Request.cmd(Command.ZRANGEBYSCORE)
-                .arg(key)
+                .arg(eventKey)
                 .arg(fromInclusive.toEpochMilli())
                 .arg(toInclusive.toEpochMilli()));
         if (response == null) {
@@ -142,16 +159,22 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
         Set<String> merchants = new HashSet<>();
 
         for (Response item : response) {
-            String[] parts = item.toString().split("\t", -1);
-            if (parts.length < 4) {
+            Response detailResponse = send(Request.cmd(Command.HGET)
+                    .arg(detailKey)
+                    .arg(item.toString()));
+            if (detailResponse == null) {
+                continue;
+            }
+            String[] parts = detailResponse.toString().split("\t", -1);
+            if (parts.length < 3) {
                 continue;
             }
             count++;
-            long amountCents = Long.parseLong(parts[1]);
+            long amountCents = Long.parseLong(parts[0]);
             totalAmountCents += amountCents;
             maxAmountCents = Math.max(maxAmountCents, amountCents);
-            merchants.add(parts[2]);
-            if (!homeCountry.equalsIgnoreCase(parts[3])) {
+            merchants.add(parts[1]);
+            if (!homeCountry.equalsIgnoreCase(parts[2])) {
                 crossBorderCount++;
             }
         }
@@ -203,12 +226,9 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
         LocalDate startDate = eventDate.minusDays((long) merchantVisitWindowDays - 1);
         for (LocalDate date = startDate; !date.isAfter(eventDate); date = date.plusDays(1)) {
             String suffix = merchantVisitBucketSuffix(date);
-            mergeCounts(aggregates, readHash("fraud:feature-state:customer:%s:merchant-counts:%s"
-                    .formatted(event.customerId(), suffix)));
-            mergeFirstSeen(aggregates, readHash("fraud:feature-state:customer:%s:merchant-first-seen:%s"
-                    .formatted(event.customerId(), suffix)));
-            mergeLastSeen(aggregates, readHash("fraud:feature-state:customer:%s:merchant-last-seen:%s"
-                    .formatted(event.customerId(), suffix)));
+            mergeCounts(aggregates, readHash(merchantCountsKey(event.customerId(), suffix)));
+            mergeFirstSeen(aggregates, readHash(merchantFirstSeenKey(event.customerId(), suffix)));
+            mergeLastSeen(aggregates, readHash(merchantLastSeenKey(event.customerId(), suffix)));
         }
         return aggregates;
     }
@@ -219,10 +239,10 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
         send(Request.cmd(Command.EVAL)
                 .arg(MERCHANT_BUCKET_UPDATE_SCRIPT)
                 .arg(4)
-                .arg("fraud:feature-state:customer:%s:merchant-counts:%s".formatted(event.customerId(), suffix))
-                .arg("fraud:feature-state:customer:%s:merchant-first-seen:%s".formatted(event.customerId(), suffix))
-                .arg("fraud:feature-state:customer:%s:merchant-last-seen:%s".formatted(event.customerId(), suffix))
-                .arg("fraud:feature-state:transaction:%s".formatted(event.transactionId()))
+                .arg(merchantCountsKey(event.customerId(), suffix))
+                .arg(merchantFirstSeenKey(event.customerId(), suffix))
+                .arg(merchantLastSeenKey(event.customerId(), suffix))
+                .arg(merchantVisitTransactionMarkerKey(event.transactionId()))
                 .arg(event.merchantId())
                 .arg(event.timestamp().toEpochMilli())
                 .arg(ttlSeconds));
@@ -230,6 +250,34 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
 
     private String merchantVisitBucketSuffix(LocalDate date) {
         return date.toString();
+    }
+
+    private String rollingEventKey(String customerId) {
+        return "fraud:feature-state:customer:%s:tx-events".formatted(customerId);
+    }
+
+    private String rollingDetailKey(String customerId) {
+        return "fraud:feature-state:customer:%s:tx-details".formatted(customerId);
+    }
+
+    private String rollingTransactionMarkerKey(String transactionId) {
+        return "fraud:feature-state:transaction:%s:rolling".formatted(transactionId);
+    }
+
+    private String merchantCountsKey(String customerId, String suffix) {
+        return "fraud:feature-state:customer:%s:merchant-counts:%s".formatted(customerId, suffix);
+    }
+
+    private String merchantFirstSeenKey(String customerId, String suffix) {
+        return "fraud:feature-state:customer:%s:merchant-first-seen:%s".formatted(customerId, suffix);
+    }
+
+    private String merchantLastSeenKey(String customerId, String suffix) {
+        return "fraud:feature-state:customer:%s:merchant-last-seen:%s".formatted(customerId, suffix);
+    }
+
+    private String merchantVisitTransactionMarkerKey(String transactionId) {
+        return "fraud:feature-state:transaction:%s:merchant-visits".formatted(transactionId);
     }
 
     private Map<String, String> readHash(String key) {
@@ -308,25 +356,17 @@ public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStateP
         return milliseconds.divide(BigDecimal.valueOf(86_400_000L), 6, RoundingMode.HALF_UP);
     }
 
-    private void expire(String key, Duration ttl) {
-        send(Request.cmd(Command.EXPIRE).arg(key).arg(ttl.toSeconds()));
-    }
-
     private Response send(Request request) {
         try {
             return redis.send(request).await().indefinitely();
         } catch (RuntimeException e) {
-            Log.warnf(e, "Redis command failed for demo aggregation");
+            Log.warnf(e, "Redis command failed for online feature state");
             throw e;
         }
     }
 
     private BigDecimal cents(long cents) {
         return BigDecimal.valueOf(cents, 2);
-    }
-
-    private long toCents(BigDecimal amount) {
-        return amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
     }
 
     private record WindowStats(

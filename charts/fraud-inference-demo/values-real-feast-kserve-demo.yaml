@@ -2,6 +2,7 @@
 # Build images first:
 #   docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
 #   docker build -f feast/Dockerfile -t fraud-feast-repo:local .
+#   docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 #   docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
 #   docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
 #

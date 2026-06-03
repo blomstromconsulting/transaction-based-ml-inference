@@ -57,7 +57,10 @@ public class FraudJavaTransformerResource {
         Map<String, Object> transaction = Objects.requireNonNull(envelope.transaction(), "transaction is required");
 
         Map<String, Object> onlineFeatures = lookupFeatures(featureService, transaction);
-        Map<String, Object> modelInput = modelInputBuilder.build(transaction, onlineFeatures);
+        Map<String, Object> modelInput = modelInputBuilder.build(
+                transaction,
+                onlineFeatures,
+                ModelFeatureSchema.onlineFeaturesForModel(model));
         PredictorRequest predictorRequest = new PredictorRequest(
                 List.of(modelInput),
                 Map.of(
