@@ -43,6 +43,9 @@ public interface ModelFeatureServiceMapping {
     interface FeaturesConfig {
         @WithName("home-country")
         String homeCountry();
+
+        @WithName("merchant-visit-window-days")
+        int merchantVisitWindowDays();
     }
 
     interface OfflineStoreConfig {

@@ -50,6 +50,15 @@ if offline_store_type != "postgres" and not customer_stats.exists():
                 "customer_max_amount_7d": 0.0,
                 "customer_distinct_merchants_24h": 0,
                 "customer_cross_border_count_7d": 0,
+                "current_merchant_visit_count_30d": 0,
+                "current_merchant_visit_share_30d": 0.0,
+                "current_merchant_rank_30d": 0,
+                "is_current_merchant_top_visited_30d": 0,
+                "days_since_first_seen_current_merchant": -1.0,
+                "days_since_last_seen_current_merchant": -1.0,
+                "customer_distinct_merchants_30d": 0,
+                "is_new_merchant_for_customer": 1,
+                "top_visited_merchant_id_30d": "",
             }
         ]
     ).to_parquet(customer_stats, index=False)

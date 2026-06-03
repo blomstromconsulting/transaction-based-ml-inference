@@ -7,6 +7,7 @@ global:
 transactionEvents:
   enabled: true
   replicaCount: 1
+  merchantVisitWindowDays: 30
   image:
     repository: ghcr.io/example/transaction-events
     tag: latest

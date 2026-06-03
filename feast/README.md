@@ -2,12 +2,12 @@
 
 This directory is a minimal Feast repository for the demo.
 
-Redis is configured as the Feast online store in `feature_store.yaml`. The Quarkus transaction-events service updates customer statistics in Redis with keys such as `fraud:customer:{customer_id}:stats`. Feast exposes those online values through Feature Services:
+Redis is configured as the Feast online store in `feature_store.yaml`. The Quarkus transaction-events service keeps functional online feature state in Redis, derives a feature snapshot, and writes the resulting rows to Feast's Redis online store through the feature writer. Feast exposes those online values through Feature Services:
 
 - `fraud_model_a_feature_service`
 - `fraud_model_b_feature_service`
 
-The Python feature definitions keep common customer features in `common_customer_features`, while Model B adds extended customer and merchant risk features.
+The Python feature definitions keep common customer features in `common_customer_features`, while Model B adds extended customer, merchant-visit, and merchant risk features.
 
 Example commands:
 

@@ -172,9 +172,14 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, Frau
                     customer_id, event_timestamp, customer_transaction_count_1h,
                     customer_transaction_count_24h, customer_total_amount_24h,
                     customer_avg_amount_7d, customer_max_amount_7d,
-                    customer_distinct_merchants_24h, customer_cross_border_count_7d
+                    customer_distinct_merchants_24h, customer_cross_border_count_7d,
+                    current_merchant_visit_count_30d, current_merchant_visit_share_30d,
+                    current_merchant_rank_30d, is_current_merchant_top_visited_30d,
+                    days_since_first_seen_current_merchant, days_since_last_seen_current_merchant,
+                    customer_distinct_merchants_30d, is_new_merchant_for_customer,
+                    top_visited_merchant_id_30d
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (customer_id, event_timestamp) DO UPDATE
                 SET customer_transaction_count_1h = EXCLUDED.customer_transaction_count_1h,
                     customer_transaction_count_24h = EXCLUDED.customer_transaction_count_24h,
@@ -182,7 +187,16 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, Frau
                     customer_avg_amount_7d = EXCLUDED.customer_avg_amount_7d,
                     customer_max_amount_7d = EXCLUDED.customer_max_amount_7d,
                     customer_distinct_merchants_24h = EXCLUDED.customer_distinct_merchants_24h,
-                    customer_cross_border_count_7d = EXCLUDED.customer_cross_border_count_7d
+                    customer_cross_border_count_7d = EXCLUDED.customer_cross_border_count_7d,
+                    current_merchant_visit_count_30d = EXCLUDED.current_merchant_visit_count_30d,
+                    current_merchant_visit_share_30d = EXCLUDED.current_merchant_visit_share_30d,
+                    current_merchant_rank_30d = EXCLUDED.current_merchant_rank_30d,
+                    is_current_merchant_top_visited_30d = EXCLUDED.is_current_merchant_top_visited_30d,
+                    days_since_first_seen_current_merchant = EXCLUDED.days_since_first_seen_current_merchant,
+                    days_since_last_seen_current_merchant = EXCLUDED.days_since_last_seen_current_merchant,
+                    customer_distinct_merchants_30d = EXCLUDED.customer_distinct_merchants_30d,
+                    is_new_merchant_for_customer = EXCLUDED.is_new_merchant_for_customer,
+                    top_visited_merchant_id_30d = EXCLUDED.top_visited_merchant_id_30d
                 """, statement -> {
             statement.setString(1, row.customerId());
             statement.setTimestamp(2, timestamp(row.eventTimestamp()));
@@ -193,6 +207,15 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, Frau
             statement.setBigDecimal(7, row.customerMaxAmount7d());
             statement.setLong(8, row.customerDistinctMerchants24h());
             statement.setLong(9, row.customerCrossBorderCount7d());
+            statement.setLong(10, row.currentMerchantVisitCount30d());
+            statement.setBigDecimal(11, row.currentMerchantVisitShare30d());
+            statement.setLong(12, row.currentMerchantRank30d());
+            statement.setLong(13, row.currentMerchantTopVisited30d());
+            statement.setBigDecimal(14, row.daysSinceFirstSeenCurrentMerchant());
+            statement.setBigDecimal(15, row.daysSinceLastSeenCurrentMerchant());
+            statement.setLong(16, row.customerDistinctMerchants30d());
+            statement.setLong(17, row.newMerchantForCustomer());
+            statement.setString(18, row.topVisitedMerchantId30d());
         });
     }
 

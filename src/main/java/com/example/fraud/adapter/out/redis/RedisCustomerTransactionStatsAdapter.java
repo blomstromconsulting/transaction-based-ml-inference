@@ -1,8 +1,12 @@
 package com.example.fraud.adapter.out.redis;
 
 import com.example.fraud.domain.model.CustomerTransactionStats;
+import com.example.fraud.domain.model.CustomerFeatureRow;
+import com.example.fraud.domain.model.MerchantFeatureRow;
+import com.example.fraud.domain.model.MerchantVisitFeatures;
+import com.example.fraud.domain.model.OnlineFeatureSnapshot;
 import com.example.fraud.domain.model.TransactionEvent;
-import com.example.fraud.domain.port.out.CustomerTransactionStatsPort;
+import com.example.fraud.domain.port.out.OnlineFeatureStatePort;
 import io.quarkus.logging.Log;
 import io.vertx.mutiny.redis.client.Command;
 import io.vertx.mutiny.redis.client.Redis;
@@ -15,31 +19,70 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 @ApplicationScoped
-public class RedisCustomerTransactionStatsAdapter implements CustomerTransactionStatsPort {
+public class RedisCustomerTransactionStatsAdapter implements OnlineFeatureStatePort {
     private static final Duration STATS_TTL = Duration.ofDays(8);
     private static final Duration WINDOW_1H = Duration.ofHours(1);
     private static final Duration WINDOW_24H = Duration.ofHours(24);
     private static final Duration WINDOW_7D = Duration.ofDays(7);
+    private static final int MERCHANT_VISIT_GRACE_DAYS = 2;
+    private static final String MERCHANT_BUCKET_UPDATE_SCRIPT = """
+            if redis.call('SETNX', KEYS[4], ARGV[2]) == 0 then
+              return 0
+            end
+            redis.call('EXPIRE', KEYS[4], ARGV[3])
+            redis.call('HINCRBY', KEYS[1], ARGV[1], 1)
+            local first = redis.call('HGET', KEYS[2], ARGV[1])
+            if (not first) or tonumber(first) > tonumber(ARGV[2]) then
+              redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+            end
+            local last = redis.call('HGET', KEYS[3], ARGV[1])
+            if (not last) or tonumber(last) < tonumber(ARGV[2]) then
+              redis.call('HSET', KEYS[3], ARGV[1], ARGV[2])
+            end
+            redis.call('EXPIRE', KEYS[1], ARGV[3])
+            redis.call('EXPIRE', KEYS[2], ARGV[3])
+            redis.call('EXPIRE', KEYS[3], ARGV[3])
+            return 1
+            """;
 
     private final Redis redis;
     private final String homeCountry;
+    private final int merchantVisitWindowDays;
 
     public RedisCustomerTransactionStatsAdapter(
             Redis redis,
-            @ConfigProperty(name = "fraud.features.home-country", defaultValue = "SE") String homeCountry) {
+            @ConfigProperty(name = "fraud.features.home-country", defaultValue = "SE") String homeCountry,
+            @ConfigProperty(name = "fraud.features.merchant-visit-window-days", defaultValue = "30")
+            int merchantVisitWindowDays) {
         this.redis = redis;
         this.homeCountry = homeCountry.toUpperCase();
+        if (merchantVisitWindowDays < 1) {
+            throw new IllegalArgumentException("fraud.features.merchant-visit-window-days must be at least 1");
+        }
+        this.merchantVisitWindowDays = merchantVisitWindowDays;
     }
 
     @Override
-    public CustomerTransactionStats updateStats(TransactionEvent event) {
-        String statsKey = "fraud:customer:%s:stats".formatted(event.customerId());
-        String transactionKey = "fraud:customer:%s:tx".formatted(event.customerId());
-        String eventKey = "fraud:customer:%s:tx-events".formatted(event.customerId());
+    public OnlineFeatureSnapshot updateAndSnapshot(TransactionEvent event) {
+        MerchantVisitFeatures merchantVisitFeatures = snapshotMerchantVisits(event);
+        CustomerTransactionStats stats = updateRollingStats(event);
+        CustomerFeatureRow customerFeatureRow = CustomerFeatureRow.from(event, stats, merchantVisitFeatures);
+        MerchantFeatureRow merchantFeatureRow = MerchantFeatureRow.from(event);
+        updateMerchantVisitBucket(event);
+        return new OnlineFeatureSnapshot(customerFeatureRow, merchantFeatureRow);
+    }
+
+    private CustomerTransactionStats updateRollingStats(TransactionEvent event) {
+        String eventKey = "fraud:feature-state:customer:%s:tx-events".formatted(event.customerId());
 
         BigDecimal amount = event.amount();
         long amountCents = amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
@@ -50,22 +93,13 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
                 event.merchantId(),
                 event.country());
 
-        send(Request.cmd(Command.ZADD).arg(eventKey).arg(eventTime).arg(member));
+        send(Request.cmd(Command.ZADD).arg(eventKey).arg("NX").arg(eventTime).arg(member));
         long oldestRetained = event.timestamp().minus(WINDOW_7D).toEpochMilli();
         send(Request.cmd(Command.ZREMRANGEBYSCORE).arg(eventKey).arg(0).arg(oldestRetained - 1));
 
-        send(Request.cmd(Command.HSET)
-                .arg(transactionKey)
-                .arg(event.transactionId())
-                .arg(event.timestamp().toString()));
-        expire(transactionKey, STATS_TTL);
         expire(eventKey, STATS_TTL);
 
-        CustomerTransactionStats stats = computeStats(eventKey, event.timestamp());
-        writeStats(statsKey, stats);
-        expire(statsKey, STATS_TTL);
-
-        return stats;
+        return computeStats(eventKey, event.timestamp());
     }
 
     private CustomerTransactionStats computeStats(String eventKey, Instant timestamp) {
@@ -82,25 +116,6 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
         long merchants24h = stats24h.distinctMerchants();
         long crossBorder7d = stats7d.crossBorderCount();
         return new CustomerTransactionStats(count1h, count24h, total24h, avg7d, max7d, merchants24h, crossBorder7d);
-    }
-
-    private void writeStats(String statsKey, CustomerTransactionStats stats) {
-        send(Request.cmd(Command.HSET)
-                .arg(statsKey)
-                .arg("customer_transaction_count_1h")
-                .arg(stats.transactionCount1h())
-                .arg("customer_transaction_count_24h")
-                .arg(stats.transactionCount24h())
-                .arg("customer_total_amount_24h_cents")
-                .arg(toCents(stats.totalAmount24h()))
-                .arg("customer_avg_amount_7d_cents")
-                .arg(toCents(stats.averageAmount7d()))
-                .arg("customer_max_amount_7d_cents")
-                .arg(toCents(stats.maxAmount7d()))
-                .arg("customer_distinct_merchants_24h")
-                .arg(stats.distinctMerchants24h())
-                .arg("customer_cross_border_count_7d")
-                .arg(stats.crossBorderCount7d()));
     }
 
     private long zcount(String key, Instant fromInclusive, Instant toInclusive) {
@@ -144,6 +159,155 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
         return new WindowStats(count, totalAmountCents, maxAmountCents, merchants.size(), crossBorderCount);
     }
 
+    private MerchantVisitFeatures snapshotMerchantVisits(TransactionEvent event) {
+        Map<String, MerchantVisitAggregate> aggregates = readMerchantVisitWindow(event);
+        long totalVisits = aggregates.values().stream()
+                .mapToLong(MerchantVisitAggregate::count)
+                .sum();
+        long distinctMerchants = aggregates.values().stream()
+                .filter(aggregate -> aggregate.count() > 0)
+                .count();
+
+        MerchantVisitAggregate currentMerchant = aggregates.get(event.merchantId());
+        long currentCount = currentMerchant == null ? 0 : currentMerchant.count();
+        BigDecimal currentShare = totalVisits == 0
+                ? BigDecimal.ZERO
+                : BigDecimal.valueOf(currentCount)
+                .divide(BigDecimal.valueOf(totalVisits), 6, RoundingMode.HALF_UP);
+
+        RankedMerchant topMerchant = topMerchant(aggregates);
+        long currentRank = rank(event.merchantId(), aggregates);
+        boolean currentIsTop = currentRank == 1 && currentCount > 0;
+        BigDecimal daysSinceFirstSeen = currentMerchant == null
+                ? BigDecimal.valueOf(-1)
+                : daysBetween(currentMerchant.firstSeenEpochMs(), event.timestamp());
+        BigDecimal daysSinceLastSeen = currentMerchant == null
+                ? BigDecimal.valueOf(-1)
+                : daysBetween(currentMerchant.lastSeenEpochMs(), event.timestamp());
+
+        return new MerchantVisitFeatures(
+                currentCount,
+                currentShare,
+                currentRank,
+                currentIsTop ? 1 : 0,
+                daysSinceFirstSeen,
+                daysSinceLastSeen,
+                distinctMerchants,
+                currentCount == 0 ? 1 : 0,
+                topMerchant == null ? "" : topMerchant.merchantId());
+    }
+
+    private Map<String, MerchantVisitAggregate> readMerchantVisitWindow(TransactionEvent event) {
+        Map<String, MerchantVisitAggregate> aggregates = new HashMap<>();
+        LocalDate eventDate = LocalDate.ofInstant(event.timestamp(), ZoneOffset.UTC);
+        LocalDate startDate = eventDate.minusDays((long) merchantVisitWindowDays - 1);
+        for (LocalDate date = startDate; !date.isAfter(eventDate); date = date.plusDays(1)) {
+            String suffix = merchantVisitBucketSuffix(date);
+            mergeCounts(aggregates, readHash("fraud:feature-state:customer:%s:merchant-counts:%s"
+                    .formatted(event.customerId(), suffix)));
+            mergeFirstSeen(aggregates, readHash("fraud:feature-state:customer:%s:merchant-first-seen:%s"
+                    .formatted(event.customerId(), suffix)));
+            mergeLastSeen(aggregates, readHash("fraud:feature-state:customer:%s:merchant-last-seen:%s"
+                    .formatted(event.customerId(), suffix)));
+        }
+        return aggregates;
+    }
+
+    private void updateMerchantVisitBucket(TransactionEvent event) {
+        String suffix = merchantVisitBucketSuffix(LocalDate.ofInstant(event.timestamp(), ZoneOffset.UTC));
+        int ttlSeconds = Math.toIntExact(Duration.ofDays((long) merchantVisitWindowDays + MERCHANT_VISIT_GRACE_DAYS).toSeconds());
+        send(Request.cmd(Command.EVAL)
+                .arg(MERCHANT_BUCKET_UPDATE_SCRIPT)
+                .arg(4)
+                .arg("fraud:feature-state:customer:%s:merchant-counts:%s".formatted(event.customerId(), suffix))
+                .arg("fraud:feature-state:customer:%s:merchant-first-seen:%s".formatted(event.customerId(), suffix))
+                .arg("fraud:feature-state:customer:%s:merchant-last-seen:%s".formatted(event.customerId(), suffix))
+                .arg("fraud:feature-state:transaction:%s".formatted(event.transactionId()))
+                .arg(event.merchantId())
+                .arg(event.timestamp().toEpochMilli())
+                .arg(ttlSeconds));
+    }
+
+    private String merchantVisitBucketSuffix(LocalDate date) {
+        return date.toString();
+    }
+
+    private Map<String, String> readHash(String key) {
+        Response response = send(Request.cmd(Command.HGETALL).arg(key));
+        Map<String, String> values = new HashMap<>();
+        if (response == null) {
+            return values;
+        }
+        if (response.isMap()) {
+            for (String fieldName : response.getKeys()) {
+                Response value = response.get(fieldName);
+                if (value != null) {
+                    values.put(fieldName, value.toString());
+                }
+            }
+            return values;
+        }
+        String name = null;
+        for (Response item : response) {
+            if (name == null) {
+                name = item.toString();
+            } else {
+                values.put(name, item.toString());
+                name = null;
+            }
+        }
+        return values;
+    }
+
+    private void mergeCounts(Map<String, MerchantVisitAggregate> aggregates, Map<String, String> counts) {
+        counts.forEach((merchantId, rawCount) -> aggregate(aggregates, merchantId)
+                .addCount(Long.parseLong(rawCount)));
+    }
+
+    private void mergeFirstSeen(Map<String, MerchantVisitAggregate> aggregates, Map<String, String> firstSeen) {
+        firstSeen.forEach((merchantId, rawTimestamp) -> aggregate(aggregates, merchantId)
+                .recordFirstSeen(Long.parseLong(rawTimestamp)));
+    }
+
+    private void mergeLastSeen(Map<String, MerchantVisitAggregate> aggregates, Map<String, String> lastSeen) {
+        lastSeen.forEach((merchantId, rawTimestamp) -> aggregate(aggregates, merchantId)
+                .recordLastSeen(Long.parseLong(rawTimestamp)));
+    }
+
+    private MerchantVisitAggregate aggregate(Map<String, MerchantVisitAggregate> aggregates, String merchantId) {
+        return aggregates.computeIfAbsent(merchantId, ignored -> new MerchantVisitAggregate());
+    }
+
+    private RankedMerchant topMerchant(Map<String, MerchantVisitAggregate> aggregates) {
+        return aggregates.entrySet().stream()
+                .filter(entry -> entry.getValue().count() > 0)
+                .map(entry -> new RankedMerchant(entry.getKey(), entry.getValue().count()))
+                .min(Comparator.comparingLong(RankedMerchant::count).reversed()
+                        .thenComparing(RankedMerchant::merchantId))
+                .orElse(null);
+    }
+
+    private long rank(String merchantId, Map<String, MerchantVisitAggregate> aggregates) {
+        MerchantVisitAggregate current = aggregates.get(merchantId);
+        if (current == null || current.count() == 0) {
+            return 0;
+        }
+        return aggregates.entrySet().stream()
+                .filter(entry -> entry.getValue().count() > 0)
+                .map(entry -> new RankedMerchant(entry.getKey(), entry.getValue().count()))
+                .sorted(Comparator.comparingLong(RankedMerchant::count).reversed()
+                        .thenComparing(RankedMerchant::merchantId))
+                .map(RankedMerchant::merchantId)
+                .toList()
+                .indexOf(merchantId) + 1L;
+    }
+
+    private BigDecimal daysBetween(long priorEpochMs, Instant currentTimestamp) {
+        BigDecimal milliseconds = BigDecimal.valueOf(
+                Math.max(0L, currentTimestamp.toEpochMilli() - priorEpochMs));
+        return milliseconds.divide(BigDecimal.valueOf(86_400_000L), 6, RoundingMode.HALF_UP);
+    }
+
     private void expire(String key, Duration ttl) {
         send(Request.cmd(Command.EXPIRE).arg(key).arg(ttl.toSeconds()));
     }
@@ -171,5 +335,38 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
             long maxAmountCents,
             long distinctMerchants,
             long crossBorderCount) {
+    }
+
+    private static final class MerchantVisitAggregate {
+        private long count;
+        private long firstSeenEpochMs = Long.MAX_VALUE;
+        private long lastSeenEpochMs = Long.MIN_VALUE;
+
+        void addCount(long count) {
+            this.count += count;
+        }
+
+        void recordFirstSeen(long epochMs) {
+            firstSeenEpochMs = Math.min(firstSeenEpochMs, epochMs);
+        }
+
+        void recordLastSeen(long epochMs) {
+            lastSeenEpochMs = Math.max(lastSeenEpochMs, epochMs);
+        }
+
+        long count() {
+            return count;
+        }
+
+        long firstSeenEpochMs() {
+            return firstSeenEpochMs;
+        }
+
+        long lastSeenEpochMs() {
+            return lastSeenEpochMs;
+        }
+    }
+
+    private record RankedMerchant(String merchantId, long count) {
     }
 }

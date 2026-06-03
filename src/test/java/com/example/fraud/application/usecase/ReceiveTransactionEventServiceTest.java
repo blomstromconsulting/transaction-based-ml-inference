@@ -1,13 +1,15 @@
 package com.example.fraud.application.usecase;
 
-import com.example.fraud.domain.model.CustomerTransactionStats;
+import com.example.fraud.domain.model.CustomerFeatureRow;
 import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.FraudDecisionType;
 import com.example.fraud.domain.model.FraudInferenceRequest;
 import com.example.fraud.domain.model.FraudInferenceResult;
+import com.example.fraud.domain.model.MerchantFeatureRow;
+import com.example.fraud.domain.model.OnlineFeatureSnapshot;
 import com.example.fraud.domain.model.TransactionEvent;
 import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
-import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
+import com.example.fraud.domain.port.in.UpdateOnlineFeatureStateUseCase;
 import com.example.fraud.domain.port.out.FraudDecisionPublisherPort;
 import com.example.fraud.domain.port.out.FeatureMaterializationPort;
 import com.example.fraud.domain.port.out.OfflineDataSinkPort;
@@ -25,14 +27,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ReceiveTransactionEventServiceTest {
     @Test
     void updatesStatsTriggersInferenceAndPublishesDecision() {
-        AtomicBoolean statsUpdated = new AtomicBoolean(false);
+        AtomicBoolean featureStateUpdated = new AtomicBoolean(false);
         AtomicBoolean featuresMaterialized = new AtomicBoolean(false);
         AtomicBoolean offlineDataWritten = new AtomicBoolean(false);
         AtomicBoolean published = new AtomicBoolean(false);
 
-        UpdateCustomerTransactionStatsUseCase statsUseCase = event -> {
-            statsUpdated.set(true);
-            return new CustomerTransactionStats(1, 1, event.amount(), event.amount(), event.amount(), 1, 0);
+        UpdateOnlineFeatureStateUseCase featureStateUseCase = event -> {
+            featureStateUpdated.set(true);
+            return new OnlineFeatureSnapshot(customerFeatures(event), MerchantFeatureRow.from(event));
         };
         TriggerFraudInferenceUseCase inferenceUseCase = request -> result(request);
         FeatureMaterializationPort featureMaterializationPort = new FeatureMaterializationPort() {
@@ -70,14 +72,14 @@ class ReceiveTransactionEventServiceTest {
         FraudDecisionPublisherPort publisher = decision -> published.set(true);
 
         ReceiveTransactionEventService service = new ReceiveTransactionEventService(
-                statsUseCase,
+                featureStateUseCase,
                 featureMaterializationPort,
                 offlineDataSinkPort,
                 inferenceUseCase,
                 publisher);
         FraudDecision decision = service.receive(event());
 
-        assertTrue(statsUpdated.get());
+        assertTrue(featureStateUpdated.get());
         assertTrue(featuresMaterialized.get());
         assertTrue(offlineDataWritten.get());
         assertTrue(published.get());
@@ -96,6 +98,28 @@ class ReceiveTransactionEventServiceTest {
                 FraudDecisionType.DECLINE,
                 List.of("transaction_amount", "customer_transaction_count_24h"),
                 Map.of("threshold", "0.80"));
+    }
+
+    private CustomerFeatureRow customerFeatures(TransactionEvent event) {
+        return new CustomerFeatureRow(
+                event.customerId(),
+                event.timestamp(),
+                1,
+                1,
+                event.amount(),
+                event.amount(),
+                event.amount(),
+                1,
+                0,
+                0,
+                BigDecimal.ZERO,
+                0,
+                0,
+                BigDecimal.valueOf(-1),
+                BigDecimal.valueOf(-1),
+                0,
+                1,
+                "");
     }
 
     private TransactionEvent event() {

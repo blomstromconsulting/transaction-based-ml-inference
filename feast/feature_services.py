@@ -13,6 +13,15 @@ extended_customer_features = [
     customer_transaction_stats_view[["customer_max_amount_7d"]],
     customer_transaction_stats_view[["customer_distinct_merchants_24h"]],
     customer_transaction_stats_view[["customer_cross_border_count_7d"]],
+    customer_transaction_stats_view[["current_merchant_visit_count_30d"]],
+    customer_transaction_stats_view[["current_merchant_visit_share_30d"]],
+    customer_transaction_stats_view[["current_merchant_rank_30d"]],
+    customer_transaction_stats_view[["is_current_merchant_top_visited_30d"]],
+    customer_transaction_stats_view[["days_since_first_seen_current_merchant"]],
+    customer_transaction_stats_view[["days_since_last_seen_current_merchant"]],
+    customer_transaction_stats_view[["customer_distinct_merchants_30d"]],
+    customer_transaction_stats_view[["is_new_merchant_for_customer"]],
+    customer_transaction_stats_view[["top_visited_merchant_id_30d"]],
 ]
 
 fraud_model_a_feature_service = FeatureService(

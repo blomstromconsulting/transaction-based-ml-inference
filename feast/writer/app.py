@@ -20,6 +20,15 @@ class CustomerFeatureRow(BaseModel):
     customer_max_amount_7d: Decimal
     customer_distinct_merchants_24h: int
     customer_cross_border_count_7d: int
+    current_merchant_visit_count_30d: int
+    current_merchant_visit_share_30d: Decimal
+    current_merchant_rank_30d: int
+    is_current_merchant_top_visited_30d: int
+    days_since_first_seen_current_merchant: Decimal
+    days_since_last_seen_current_merchant: Decimal
+    customer_distinct_merchants_30d: int
+    is_new_merchant_for_customer: int
+    top_visited_merchant_id_30d: str
 
 
 class MerchantFeatureRow(BaseModel):

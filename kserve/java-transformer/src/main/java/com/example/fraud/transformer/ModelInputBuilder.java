@@ -46,7 +46,7 @@ public class ModelInputBuilder {
             return;
         }
         List<String> missing = ModelFeatureSchema.requiredTransactionFields().stream()
-                .filter(field -> isMissing(transaction.get(field)))
+                .filter(field -> isMissingTransactionField(transaction.get(field)))
                 .toList();
         if (!missing.isEmpty()) {
             throw new FeatureValidationException(
@@ -60,7 +60,7 @@ public class ModelInputBuilder {
         }
         List<String> missing = onlineFeatures.entrySet().stream()
                 .filter(entry -> ModelFeatureSchema.isModelInputOnlineFeature(entry.getKey()))
-                .filter(entry -> isMissing(entry.getValue()))
+                .filter(entry -> isMissingOnlineFeature(entry.getValue()))
                 .map(Map.Entry::getKey)
                 .toList();
         if (onlineFeatures.isEmpty() || !missing.isEmpty()) {
@@ -73,7 +73,11 @@ public class ModelInputBuilder {
         }
     }
 
-    private boolean isMissing(Object value) {
+    private boolean isMissingTransactionField(Object value) {
         return value == null || (value instanceof String text && text.isBlank());
+    }
+
+    private boolean isMissingOnlineFeature(Object value) {
+        return value == null;
     }
 }

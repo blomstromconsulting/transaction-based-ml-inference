@@ -1,16 +1,14 @@
 package com.example.fraud.application.usecase;
 
-import com.example.fraud.domain.model.CustomerFeatureRow;
-import com.example.fraud.domain.model.CustomerTransactionStats;
 import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.FraudInferenceRequest;
 import com.example.fraud.domain.model.FraudInferenceResult;
-import com.example.fraud.domain.model.MerchantFeatureRow;
+import com.example.fraud.domain.model.OnlineFeatureSnapshot;
 import com.example.fraud.domain.model.TransactionEvent;
 import com.example.fraud.domain.model.TransactionAlreadyProcessedException;
 import com.example.fraud.domain.port.in.ReceiveTransactionEventUseCase;
 import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
-import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
+import com.example.fraud.domain.port.in.UpdateOnlineFeatureStateUseCase;
 import com.example.fraud.domain.port.out.FraudDecisionPublisherPort;
 import com.example.fraud.domain.port.out.FeatureMaterializationPort;
 import com.example.fraud.domain.port.out.OfflineDataSinkPort;
@@ -22,19 +20,19 @@ import java.time.Instant;
 @ApplicationScoped
 public class ReceiveTransactionEventService implements ReceiveTransactionEventUseCase {
     private final TransactionNormalizer normalizer = new TransactionNormalizer();
-    private final UpdateCustomerTransactionStatsUseCase updateStatsUseCase;
+    private final UpdateOnlineFeatureStateUseCase updateFeatureStateUseCase;
     private final FeatureMaterializationPort featureMaterializationPort;
     private final OfflineDataSinkPort offlineDataSinkPort;
     private final TriggerFraudInferenceUseCase triggerFraudInferenceUseCase;
     private final FraudDecisionPublisherPort decisionPublisherPort;
 
     public ReceiveTransactionEventService(
-            UpdateCustomerTransactionStatsUseCase updateStatsUseCase,
+            UpdateOnlineFeatureStateUseCase updateFeatureStateUseCase,
             FeatureMaterializationPort featureMaterializationPort,
             OfflineDataSinkPort offlineDataSinkPort,
             TriggerFraudInferenceUseCase triggerFraudInferenceUseCase,
             FraudDecisionPublisherPort decisionPublisherPort) {
-        this.updateStatsUseCase = updateStatsUseCase;
+        this.updateFeatureStateUseCase = updateFeatureStateUseCase;
         this.featureMaterializationPort = featureMaterializationPort;
         this.offlineDataSinkPort = offlineDataSinkPort;
         this.triggerFraudInferenceUseCase = triggerFraudInferenceUseCase;
@@ -59,14 +57,12 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
     private FraudDecision process(TransactionEvent normalized) {
         offlineDataSinkPort.recordTransaction(normalized);
 
-        CustomerTransactionStats stats = updateStatsUseCase.update(normalized);
-        CustomerFeatureRow customerFeatureRow = CustomerFeatureRow.from(normalized, stats);
-        MerchantFeatureRow merchantFeatureRow = MerchantFeatureRow.from(normalized);
+        OnlineFeatureSnapshot featureSnapshot = updateFeatureStateUseCase.update(normalized);
 
-        featureMaterializationPort.materializeCustomerFeatures(customerFeatureRow);
-        featureMaterializationPort.materializeMerchantFeatures(merchantFeatureRow);
-        offlineDataSinkPort.recordCustomerFeatures(customerFeatureRow);
-        offlineDataSinkPort.recordMerchantFeatures(merchantFeatureRow);
+        featureMaterializationPort.materializeCustomerFeatures(featureSnapshot.customerFeatures());
+        featureMaterializationPort.materializeMerchantFeatures(featureSnapshot.merchantFeatures());
+        offlineDataSinkPort.recordCustomerFeatures(featureSnapshot.customerFeatures());
+        offlineDataSinkPort.recordMerchantFeatures(featureSnapshot.merchantFeatures());
 
         FraudInferenceResult result = triggerFraudInferenceUseCase.trigger(new FraudInferenceRequest(normalized));
         FraudDecision decision = new FraudDecision(

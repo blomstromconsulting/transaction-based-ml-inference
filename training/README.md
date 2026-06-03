@@ -11,7 +11,7 @@ When `fraud.offline-store.enabled=true`, Quarkus runs Flyway migrations from `sr
 - `fraud_transactions`: historical transaction facts.
 - `fraud_labels`: latest confirmed fraud or legitimate outcome per transaction.
 - `fraud_label_events`: immutable annotation history for label changes.
-- `customer_transaction_stats`: historical customer aggregate feature values.
+- `customer_transaction_stats`: historical customer aggregate and merchant-visit feature values.
 - `merchant_risk_features`: historical merchant feature values.
 - `fraud_prediction_logs`: optional model score and decision audit trail.
 - `fraud_transaction_processing`: processing status for live inference attempts.

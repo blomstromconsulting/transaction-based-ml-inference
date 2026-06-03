@@ -41,7 +41,8 @@ class ModelInputBuilderTest {
 
         assertEquals(1299.99, input.get("transaction_amount"));
         assertEquals(0.72, input.get("merchant_risk_score"));
-        assertEquals(11, input.size());
+        assertEquals("", input.get("top_visited_merchant_id_30d"));
+        assertEquals(20, input.size());
     }
 
     private Map<String, Object> transaction() {
@@ -64,6 +65,15 @@ class ModelInputBuilderTest {
         features.put("customer_max_amount_7d", 1299.99);
         features.put("customer_distinct_merchants_24h", 2);
         features.put("customer_cross_border_count_7d", 1);
+        features.put("current_merchant_visit_count_30d", 0);
+        features.put("current_merchant_visit_share_30d", 0.0);
+        features.put("current_merchant_rank_30d", 0);
+        features.put("is_current_merchant_top_visited_30d", 0);
+        features.put("days_since_first_seen_current_merchant", -1.0);
+        features.put("days_since_last_seen_current_merchant", -1.0);
+        features.put("customer_distinct_merchants_30d", 0);
+        features.put("is_new_merchant_for_customer", 1);
+        features.put("top_visited_merchant_id_30d", "");
         features.put("merchant_risk_score", 0.72);
         return features;
     }

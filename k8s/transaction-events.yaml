@@ -25,6 +25,8 @@ spec:
               value: "6379"
             - name: FRAUD_FEAST_URL
               value: http://feast-feature-server:6566
+            - name: FRAUD_FEATURES_MERCHANT_VISIT_WINDOW_DAYS
+              value: "30"
             - name: FRAUD_OFFLINE_STORE_ENABLED
               value: "true"
             - name: FRAUD_OFFLINE_STORE_JDBC_URL

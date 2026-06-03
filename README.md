@@ -13,7 +13,8 @@ The deployed demo has two data paths:
 Transaction Event
   -> transaction-events Quarkus service
   -> validate and normalize
-  -> compute Redis sorted-set rolling aggregates
+  -> update Redis online feature state
+  -> derive rolling and merchant-visit feature snapshot
   -> write normalized transaction facts to Postgres offline data sink
   -> materialize aggregate feature rows through Feast feature writer
   -> Feast writes online features to Redis using its online store format
@@ -25,8 +26,8 @@ Transaction Event
   -> Transformer creates model input
   -> KServe Predictor: Model A or Model B
   -> fraud score and decision metadata
-  -> fraud decision event is logged/published
   -> write prediction audit row to Postgres offline data sink
+  -> fraud decision event is logged/published
 ```
 
 ## Data Flow Diagram
@@ -39,8 +40,8 @@ flowchart LR
     app --> offlineTx[("Postgres offline data sink<br/>fraud_transactions")]
     offlineTx -. "later joined with labels" .-> labels[("fraud_labels<br/>chargebacks, disputes, review")]
 
-    app --> redisAdapter["Redis rolling-window stats adapter"]
-    redisAdapter --> debugRedis[("Redis debug stats<br/>sorted sets + readable hashes")]
+    app --> redisAdapter["Redis online feature state adapter"]
+    redisAdapter --> featureState[("Redis feature state<br/>rolling windows + merchant visits")]
     app --> writer["Feast feature writer<br/>materialize feature rows"]
     writer --> feastOnline[("Redis Feast online store<br/>Feast internal format")]
     app --> offlineFeatures[("Postgres offline data sink<br/>customer_transaction_stats<br/>merchant_risk_features")]
@@ -58,9 +59,9 @@ flowchart LR
     predictor --> modelB["Fraud Model B<br/>extended feature service"]
     modelA --> result["Fraud score + metadata"]
     modelB --> result
+    result --> offlinePredictions[("Postgres offline data sink<br/>fraud_prediction_logs")]
     result --> decision["Fraud decision event<br/>APPROVE, REVIEW, or DECLINE"]
     decision --> publisher["Decision publisher/log"]
-    publisher --> offlinePredictions[("Postgres offline data sink<br/>fraud_prediction_logs")]
 
     labels --> training["Feast historical retrieval<br/>point-in-time training set"]
     offlineFeatures --> training
@@ -77,7 +78,7 @@ sequenceDiagram
     participant Client as Client
     participant TxSvc as transaction-events<br/>Quarkus service
     participant Offline as Postgres<br/>offline data sink
-    participant RedisDebug as Redis<br/>debug aggregates
+    participant FeatureState as Redis<br/>online feature state
     participant Writer as Feast feature writer
     participant FeastRedis as Redis<br/>Feast online store
     participant KServe as KServe<br/>InferenceService
@@ -95,11 +96,11 @@ sequenceDiagram
     TxSvc->>Offline: INSERT fraud_transactions
     Note over TxSvc,Offline: Historical fact row: transaction_id, customer_id, card_id, merchant_id, merchant_category, amount, currency, country, event_timestamp
 
-    TxSvc->>RedisDebug: Update rolling aggregates
-    Note over TxSvc,RedisDebug: Keys: fraud:customer:{customer_id}:tx-events, fraud:customer:{customer_id}:stats, fraud:merchant:{merchant_id}:risk
+    TxSvc->>FeatureState: Update and snapshot online feature state
+    Note over TxSvc,FeatureState: Keys: fraud:feature-state:customer:{customer_id}:tx-events and merchant visit day buckets
 
     TxSvc->>Writer: POST /materialize/customer
-    Note over TxSvc,Writer: CustomerFeatureRow: customer_id, event_timestamp, count_1h, count_24h, total_amount_24h, avg_amount_7d, max_amount_7d, distinct_merchants_24h, cross_border_count_7d
+    Note over TxSvc,Writer: CustomerFeatureRow: rolling counts, amounts, cross-border stats, merchant visit counts/rank/top/new-merchant features
 
     Writer->>FeastRedis: FeatureStore.write_to_online_store(customer_transaction_stats_view)
     Note over Writer,FeastRedis: Feast-formatted online values keyed by customer_id, including event_timestamp and created_timestamp
@@ -131,10 +132,10 @@ sequenceDiagram
     Feast->>FeastRedis: Read online features
     FeastRedis-->>Feast: Feature values
     Feast-->>Transformer: Online feature map
-    Note over Feast,Transformer: Customer stats and optional merchant risk from Redis through Feast
+    Note over Feast,Transformer: Customer rolling stats, merchant visit features, and optional merchant risk from Redis through Feast
 
     Transformer->>Predictor: Forward enriched request
-    Note over Transformer,Predictor: instances[0]: transaction_amount, transaction_country, merchant_category, customer stats, merchant_risk_score for Model B
+    Note over Transformer,Predictor: instances[0]: transaction fields, customer stats, merchant visit features, merchant_risk_score for Model B
 
     Predictor-->>Transformer: Prediction response
     Note over Predictor,Transformer: predictions[0].fraud_score
@@ -143,11 +144,11 @@ sequenceDiagram
     Note over Transformer,KServe: fraudScore, decision, featuresUsed, metadata
 
     KServe-->>TxSvc: Inference result
-    TxSvc->>Publisher: Publish/log fraud decision
-    Note over TxSvc,Publisher: FraudDecision: transaction_id, model, fraud_score, decision, features_used
-
     TxSvc->>Offline: INSERT fraud_prediction_logs
     Note over TxSvc,Offline: Prediction audit row: transaction_id, model, fraud_score, decision, features_used, created_timestamp
+
+    TxSvc->>Publisher: Publish/log fraud decision
+    Note over TxSvc,Publisher: FraudDecision: transaction_id, model, fraud_score, decision, features_used
 
     TxSvc-->>Client: 202 Accepted
     Note over TxSvc,Client: API response: transaction_id, model, fraud_score, decision, features_used
@@ -155,7 +156,7 @@ sequenceDiagram
 
 The online path and offline path intentionally store different shapes:
 
-- Redis debug keys are application-readable rolling-window state for the demo aggregator.
+- Redis feature-state keys are functional online state used to derive the feature snapshot before inference.
 - Redis Feast online-store keys are owned by Feast and are read by the KServe transformer through Feast APIs.
 - Postgres stores historical facts, feature rows, labels, and prediction logs for retraining and audit. Quarkus writes these rows directly through `OfflineDataSinkPort`; Feast reads the feature tables as configured offline data sources.
 
@@ -195,22 +196,33 @@ Model B extends Model A with more customer and merchant features:
 - `customer_max_amount_7d`
 - `customer_distinct_merchants_24h`
 - `customer_cross_border_count_7d`
+- `current_merchant_visit_count_30d`
+- `current_merchant_visit_share_30d`
+- `current_merchant_rank_30d`
+- `is_current_merchant_top_visited_30d`
+- `days_since_first_seen_current_merchant`
+- `days_since_last_seen_current_merchant`
+- `customer_distinct_merchants_30d`
+- `is_new_merchant_for_customer`
+- `top_visited_merchant_id_30d`
 - `merchant_risk_score`
 
 The Feast repository under [feast](./feast) defines common reusable customer features and composes them into separate Feature Services for each model. Training scripts read [training/model_catalog.json](./training/model_catalog.json) so model feature references and training columns stay centralized for the offline path.
 
-## Redis Aggregation
+## Redis Online Feature State
 
-`RedisCustomerTransactionStatsAdapter` updates demo aggregates using these key patterns:
+`RedisCustomerTransactionStatsAdapter` implements `OnlineFeatureStatePort`. It stores functional online feature state, not debug-only data. The current implementation uses these key patterns:
 
-- `fraud:customer:{customer_id}:tx`
-- `fraud:customer:{customer_id}:stats`
-- `fraud:customer:{customer_id}:tx-events`
-- `fraud:merchant:{merchant_id}:risk`
+- `fraud:feature-state:customer:{customer_id}:tx-events`
+- `fraud:feature-state:customer:{customer_id}:merchant-counts:{yyyy-mm-dd}`
+- `fraud:feature-state:customer:{customer_id}:merchant-first-seen:{yyyy-mm-dd}`
+- `fraud:feature-state:customer:{customer_id}:merchant-last-seen:{yyyy-mm-dd}`
 
-The adapter uses Redis sorted sets for event-time rolling windows and stores readable hash snapshots for debugging. After computing the aggregate row, the application calls the Feast feature writer, which uses the Feast SDK to write the row to Feast's Redis online store format. The transformer reads features through Feast, not from the application-specific debug keys.
+The adapter uses a Redis sorted set for event-time rolling transaction windows and bucketed hashes for configurable merchant-visit windows. The default merchant visit window is 30 days and can be configured with `fraud.features.merchant-visit-window-days`; changing that value changes feature semantics and should be coordinated with the model version using those features.
 
-For higher-volume production systems, replace the in-service Redis window calculation with Kafka Streams, Flink, Spark, RedisTimeSeries, or another streaming feature pipeline. Keep the output contract the same: materialize rows through Feast or a Feast-compatible online writer.
+Merchant-visit features are calculated from prior state before the current transaction is added to the merchant visit bucket. This preserves novelty signals such as `is_new_merchant_for_customer`. After computing the feature row, the application calls the Feast feature writer, which uses the Feast SDK to write the row to Feast's Redis online store format. The transformer reads features through Feast, not directly from the Redis feature-state keys.
+
+For higher-volume production systems, keep the same output contract but move feature computation to a dedicated service or stream processor when needed. Redis remains valid as an online feature state store for novelty and merchant-visit features; the important boundary is that model serving reads materialized feature rows through Feast or a Feature-Service-compatible API.
 
 ## KServe Transformer
 
@@ -254,6 +266,7 @@ fraud.model.MODEL_B.feature-service=fraud_model_b_feature_service
 fraud.model.MODEL_B.model-version=demo-b-v1
 
 fraud.features.home-country=SE
+fraud.features.merchant-visit-window-days=30
 fraud.kserve.connect-timeout-ms=2000
 fraud.kserve.read-timeout-ms=5000
 ```
@@ -326,6 +339,15 @@ Example response:
     "customer_max_amount_7d",
     "customer_distinct_merchants_24h",
     "customer_cross_border_count_7d",
+    "current_merchant_visit_count_30d",
+    "current_merchant_visit_share_30d",
+    "current_merchant_rank_30d",
+    "is_current_merchant_top_visited_30d",
+    "days_since_first_seen_current_merchant",
+    "days_since_last_seen_current_merchant",
+    "customer_distinct_merchants_30d",
+    "is_new_merchant_for_customer",
+    "top_visited_merchant_id_30d",
     "merchant_risk_score"
   ]
 }
@@ -366,6 +388,15 @@ Transformer model input:
       "customer_max_amount_7d": 1299.99,
       "customer_distinct_merchants_24h": 5,
       "customer_cross_border_count_7d": 1,
+      "current_merchant_visit_count_30d": 2,
+      "current_merchant_visit_share_30d": 0.25,
+      "current_merchant_rank_30d": 1,
+      "is_current_merchant_top_visited_30d": 1,
+      "days_since_first_seen_current_merchant": 12.5,
+      "days_since_last_seen_current_merchant": 2.0,
+      "customer_distinct_merchants_30d": 6,
+      "is_new_merchant_for_customer": 0,
+      "top_visited_merchant_id_30d": "merchant-789",
       "merchant_risk_score": 0.72
     }
   ]
@@ -492,6 +523,43 @@ feast:
 ```
 
 Postgres stores historical transactions, historical feature values, and prediction logs written by the Quarkus offline data sink. Feast treats those Postgres tables as offline data sources for historical retrieval; it is not the writer for this Postgres path. Fraud labels still arrive later from chargebacks, disputes, manual review, or another outcome system. Redis remains the online store used by low-latency inference.
+
+To connect to the Helm-deployed Postgres database, port-forward the chart-managed service:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-postgres 15432:5432
+```
+
+In another terminal, read the generated password and connect with `psql`:
+
+```bash
+export PGPASSWORD="$(
+  kubectl get secret -n fraud-demo fraud-demo-fraud-inference-demo-postgres-credentials \
+    -o jsonpath='{.data.password}' | base64 --decode
+)"
+
+psql "host=localhost port=15432 dbname=fraud_features user=feast sslmode=disable"
+```
+
+Useful checks after connecting:
+
+```sql
+select version, description, success
+from flyway_schema_history
+order by installed_rank;
+
+select *
+from fraud_transactions
+order by event_timestamp desc
+limit 10;
+
+select *
+from customer_transaction_stats
+order by event_timestamp desc
+limit 10;
+```
+
+If you override `postgres.database`, `postgres.user`, `postgres.passwordSecretKey`, `postgres.existingSecret`, the release name, or the namespace, adjust the service name, Secret name, jsonpath key, and connection string accordingly. For production deployments, prefer `postgres.existingSecret` over storing the password in Helm values.
 
 After deployment, port-forward the Quarkus service:
 

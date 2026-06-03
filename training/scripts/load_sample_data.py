@@ -81,9 +81,14 @@ def write_customer_features(cur, row) -> None:
             customer_id, event_timestamp, customer_transaction_count_1h,
             customer_transaction_count_24h, customer_total_amount_24h,
             customer_avg_amount_7d, customer_max_amount_7d,
-            customer_distinct_merchants_24h, customer_cross_border_count_7d
+            customer_distinct_merchants_24h, customer_cross_border_count_7d,
+            current_merchant_visit_count_30d, current_merchant_visit_share_30d,
+            current_merchant_rank_30d, is_current_merchant_top_visited_30d,
+            days_since_first_seen_current_merchant, days_since_last_seen_current_merchant,
+            customer_distinct_merchants_30d, is_new_merchant_for_customer,
+            top_visited_merchant_id_30d
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (customer_id, event_timestamp) DO UPDATE
         SET customer_transaction_count_1h = EXCLUDED.customer_transaction_count_1h,
             customer_transaction_count_24h = EXCLUDED.customer_transaction_count_24h,
@@ -91,7 +96,16 @@ def write_customer_features(cur, row) -> None:
             customer_avg_amount_7d = EXCLUDED.customer_avg_amount_7d,
             customer_max_amount_7d = EXCLUDED.customer_max_amount_7d,
             customer_distinct_merchants_24h = EXCLUDED.customer_distinct_merchants_24h,
-            customer_cross_border_count_7d = EXCLUDED.customer_cross_border_count_7d
+            customer_cross_border_count_7d = EXCLUDED.customer_cross_border_count_7d,
+            current_merchant_visit_count_30d = EXCLUDED.current_merchant_visit_count_30d,
+            current_merchant_visit_share_30d = EXCLUDED.current_merchant_visit_share_30d,
+            current_merchant_rank_30d = EXCLUDED.current_merchant_rank_30d,
+            is_current_merchant_top_visited_30d = EXCLUDED.is_current_merchant_top_visited_30d,
+            days_since_first_seen_current_merchant = EXCLUDED.days_since_first_seen_current_merchant,
+            days_since_last_seen_current_merchant = EXCLUDED.days_since_last_seen_current_merchant,
+            customer_distinct_merchants_30d = EXCLUDED.customer_distinct_merchants_30d,
+            is_new_merchant_for_customer = EXCLUDED.is_new_merchant_for_customer,
+            top_visited_merchant_id_30d = EXCLUDED.top_visited_merchant_id_30d
         """,
         (
             customer_id,
@@ -103,6 +117,15 @@ def write_customer_features(cur, row) -> None:
             float(amount),
             2 + label,
             cross_border + label,
+            label,
+            0.50 if label else 0.10,
+            1 + label,
+            label,
+            3.0 if label else -1.0,
+            1.0 if label else -1.0,
+            2 + label,
+            0 if label else 1,
+            "merchant-789" if label else "",
         ),
     )
 

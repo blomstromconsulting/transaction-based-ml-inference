@@ -29,7 +29,7 @@ spec:
             - sh
             - -ec
             - |
-              until psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -tAc "select to_regclass('${POSTGRES_SCHEMA}.customer_transaction_stats') is not null and to_regclass('${POSTGRES_SCHEMA}.merchant_risk_features') is not null" | grep -q t; do
+              until psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -tAc "select exists (select 1 from information_schema.columns where table_schema = '${POSTGRES_SCHEMA}' and table_name = 'customer_transaction_stats' and column_name = 'current_merchant_visit_count_30d') and to_regclass('${POSTGRES_SCHEMA}.merchant_risk_features') is not null" | grep -q t; do
                 echo "waiting for Flyway-created feature tables"
                 sleep 2
               done
