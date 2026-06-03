@@ -37,15 +37,15 @@ flowchart LR
     event["Incoming transaction event"] --> rest["transaction-events service<br/>REST or messaging adapter"]
     rest --> app["Application use cases<br/>validate, normalize, orchestrate"]
 
-    app --> offlineTx[("Postgres offline data sink<br/>fraud_transactions")]
+    app -- "1. record transaction" --> offlineTx[("Postgres offline data sink<br/>fraud_transactions")]
     offlineTx -. "later joined with labels" .-> labels[("fraud_labels<br/>chargebacks, disputes, review")]
 
-    app --> redisAdapter["Redis online feature state adapter"]
+    app -- "2. update + snapshot state" --> redisAdapter["Redis online feature state adapter"]
     redisAdapter --> featureState[("Redis feature state<br/>rolling windows + merchant visits")]
-    app --> writer["Feast feature writer<br/>materialize feature rows"]
+    app -- "3. materialize online features" --> writer["Feast feature writer<br/>materialize feature rows"]
     writer --> feastOnline[("Redis Feast online store<br/>Feast internal format")]
-    app --> offlineFeatures[("Postgres offline data sink<br/>customer_transaction_stats<br/>merchant_risk_features")]
-    app --> kserveAdapter["KServe inference adapter"]
+    app -- "4. record feature rows" --> offlineFeatures[("Postgres offline data sink<br/>customer_transaction_stats<br/>merchant_risk_features")]
+    app -- "5. trigger inference" --> kserveAdapter["KServe inference adapter"]
 
     kserveAdapter --> isvc["KServe InferenceService<br/>Model A or Model B"]
     isvc --> transformer["KServe Transformer<br/>feature enrichment"]
