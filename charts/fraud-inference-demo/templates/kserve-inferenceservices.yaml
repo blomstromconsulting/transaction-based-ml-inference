@@ -32,8 +32,13 @@ spec:
   transformer:
     containers:
       - name: transformer
+        {{- if eq $.Values.kserve.transformer.implementation "java" }}
+        image: "{{ $.Values.kserve.transformer.javaImage.repository }}:{{ $.Values.kserve.transformer.javaImage.tag }}"
+        imagePullPolicy: {{ $.Values.kserve.transformer.javaImage.pullPolicy }}
+        {{- else }}
         image: "{{ $.Values.kserve.transformer.image.repository }}:{{ $.Values.kserve.transformer.image.tag }}"
         imagePullPolicy: {{ $.Values.kserve.transformer.image.pullPolicy }}
+        {{- end }}
         {{- with $.Values.kserve.transformer.command }}
         command:
           {{- toYaml . | nindent 10 }}
@@ -45,13 +50,30 @@ spec:
         env:
           - name: TARGET_MODEL
             value: {{ $modelName | quote }}
+          - name: FRAUD_TRANSFORMER_TARGET_MODEL
+            value: {{ $modelName | quote }}
+          - name: TRANSFORMER_IMPLEMENTATION
+            value: {{ $.Values.kserve.transformer.implementation | quote }}
+          - name: STRICT_FEATURE_VALIDATION
+            value: {{ $.Values.kserve.transformer.strictFeatureValidation | quote }}
+          - name: FRAUD_TRANSFORMER_STRICT_FEATURE_VALIDATION
+            value: {{ $.Values.kserve.transformer.strictFeatureValidation | quote }}
           - name: FEAST_REPO_PATH
             value: {{ $.Values.kserve.transformer.feastRepoPath | quote }}
+          - name: FRAUD_FEAST_URL
+            value: {{ default (printf "http://%s:%v" (include "fraud-inference-demo.feastName" $) $.Values.feast.service.port) $.Values.kserve.transformer.feastUrl | quote }}
+          - name: FRAUD_PREDICTOR_URL
+            value: {{ printf $.Values.kserve.transformer.predictorUrlTemplate $model.inferenceServiceName $.Release.Namespace $model.inferenceServiceName | quote }}
           - name: {{ $modelName }}_FEATURE_SERVICE
             valueFrom:
               configMapKeyRef:
                 name: {{ include "fraud-inference-demo.configName" $ }}
                 key: {{ $modelName }}_FEATURE_SERVICE
+          - name: FRAUD_MODEL_{{ $modelName }}_FEATURE_SERVICE
+            valueFrom:
+              configMapKeyRef:
+                name: {{ include "fraud-inference-demo.configName" $ }}
+                key: fraud.model.{{ $modelName }}.feature-service
           - name: FEAST_REDIS_CONNECTION_STRING
             value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" $) $.Values.redis.service.port | quote }}
           - name: FEAST_OFFLINE_STORE_TYPE

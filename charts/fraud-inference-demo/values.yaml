@@ -118,11 +118,19 @@ kserve:
     # InferenceService as a Kubernetes Service.
     pathTemplate: /v1/models/%s:predict
   transformer:
+    implementation: python
+    strictFeatureValidation: true
     image:
       repository: ghcr.io/example/fraud-feature-transformer
       tag: latest
       pullPolicy: IfNotPresent
+    javaImage:
+      repository: ghcr.io/example/fraud-java-transformer
+      tag: latest
+      pullPolicy: IfNotPresent
     feastRepoPath: /feast
+    feastUrl: ""
+    predictorUrlTemplate: "http://%s-predictor.%s.svc.cluster.local/v1/models/%s:predict"
     env: []
     command: []
     args: []

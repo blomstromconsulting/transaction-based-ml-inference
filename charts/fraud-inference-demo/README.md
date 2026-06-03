@@ -61,6 +61,7 @@ docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
 docker build -f feast/Dockerfile -t fraud-feast-repo:local .
 docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
+docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
 ```
 
 Deploy with the example values file:
@@ -73,6 +74,24 @@ helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
 ```
 
 This mode deploys a real Feast feature server, Feast feature writer, and real KServe `InferenceService` resources with the Feast transformer. The example still uses tiny Python predictor containers for Model A and Model B so the chart is runnable without external model images.
+
+The chart supports two transformer implementations:
+
+```yaml
+kserve:
+  transformer:
+    implementation: python
+```
+
+or:
+
+```yaml
+kserve:
+  transformer:
+    implementation: java
+```
+
+The Python transformer uses the KServe and Feast Python SDKs. The Java transformer is a Quarkus proxy transformer that calls Feast feature server REST, validates required online feature values, calls the predictor URL, and returns the same fraud response shape.
 
 The same values file enables Postgres and configures Feast with:
 

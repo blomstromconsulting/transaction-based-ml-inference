@@ -3,6 +3,7 @@
 #   docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
 #   docker build -f feast/Dockerfile -t fraud-feast-repo:local .
 #   docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
+#   docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
 #
 # This example still uses simple Python demo predictors. Replace those with real
 # model-serving images for a production-like deployment.
@@ -45,10 +46,16 @@ kserve:
   generatedInferenceUrls:
     enabled: false
   transformer:
+    implementation: python
     image:
       repository: fraud-feature-transformer
       tag: local
       pullPolicy: Never
+    javaImage:
+      repository: fraud-java-transformer
+      tag: local
+      pullPolicy: Never
+    strictFeatureValidation: true
     resources:
       requests:
         cpu: 100m

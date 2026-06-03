@@ -219,10 +219,20 @@ The transformer scaffold is in [kserve/transformer](./kserve/transformer). It:
 3. Extracts entity keys such as `customer_id` and `merchant_id`.
 4. Calls Feast online serving.
 5. Feast reads Redis-backed online feature values.
-6. Merges transaction fields with online features.
-7. Builds an explicit model input payload.
-8. Lets KServe forward the payload to the predictor.
-9. Converts predictor output into a fraud decision response.
+6. Validates that every feature required by the Feature Service was returned and is non-null.
+7. Merges transaction fields with online features.
+8. Builds an explicit model input payload.
+9. Lets KServe forward the payload to the predictor.
+10. Converts predictor output into a fraud decision response.
+
+The transformer is intentionally strict by default. Missing transaction fields, missing Feast values, or null Feast values raise a clear `FeatureValidationError` instead of silently defaulting to zero. This makes a missing materialization job, stale feature pipeline, or mismatched Feature Service visible during smoke tests and production monitoring. Set `STRICT_FEATURE_VALIDATION=false` only for local experiments where fallback defaults are acceptable.
+
+Two transformer implementations are provided:
+
+- [kserve/transformer](./kserve/transformer): Python implementation using the KServe Python SDK and Feast Python SDK.
+- [kserve/java-transformer](./kserve/java-transformer): Quarkus Java implementation that exposes the same prediction endpoint, calls Feast feature server REST, validates the feature response, calls the predictor, and returns the same fraud response shape.
+
+The Python transformer is the default because Feast's Python SDK can resolve Feature Service definitions directly. The Java transformer is useful when JVM operational consistency, type checking, or latency predictability is more important; it uses Feast feature server REST and keeps the same request contract.
 
 ## Configuration
 
@@ -411,11 +421,22 @@ docker build -f src/main/docker/Dockerfile.jvm -t transaction-events:local .
 docker build -f feast/Dockerfile -t fraud-feast-repo:local .
 docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
+docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
 
 helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
   --namespace fraud-demo \
   --create-namespace \
   -f ./charts/fraud-inference-demo/values-real-feast-kserve-demo.yaml
+```
+
+The values file defaults to the Python transformer. To deploy the Java transformer instead:
+
+```bash
+helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
+  --namespace fraud-demo \
+  --create-namespace \
+  -f ./charts/fraud-inference-demo/values-real-feast-kserve-demo.yaml \
+  --set kserve.transformer.implementation=java
 ```
 
 The real Feast/KServe example deploys a Feast feature server, Feast feature writer, and KServe transformer. It still uses tiny Python demo predictors for Model A and Model B; replace those with real model-serving images for production-like testing.
