@@ -113,6 +113,16 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
                 )
                 """);
         execute("""
+                CREATE TABLE IF NOT EXISTS fraud_transaction_processing (
+                    transaction_id TEXT PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    error_message TEXT,
+                    started_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """);
+        execute("""
                 CREATE OR REPLACE VIEW fraud_training_examples AS
                 SELECT
                     t.transaction_id,
@@ -126,6 +136,57 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
                 FROM fraud_transactions t
                 JOIN fraud_labels l ON l.transaction_id = t.transaction_id
                 """);
+    }
+
+    @Override
+    public boolean recordProcessingStarted(TransactionEvent event) {
+        if (!enabled) {
+            return true;
+        }
+        int inserted = executeUpdate("""
+                INSERT INTO fraud_transaction_processing (
+                    transaction_id, model, status
+                )
+                VALUES (?, ?, 'STARTED')
+                ON CONFLICT (transaction_id) DO NOTHING
+                """, statement -> {
+            statement.setString(1, event.transactionId());
+            statement.setString(2, event.requestedModel());
+        });
+        if (inserted > 0) {
+            return true;
+        }
+
+        int restarted = executeUpdate("""
+                UPDATE fraud_transaction_processing
+                SET model = ?,
+                    status = 'STARTED',
+                    error_message = NULL,
+                    updated_timestamp = now()
+                WHERE transaction_id = ?
+                  AND status = 'FAILED'
+                """, statement -> {
+            statement.setString(1, event.requestedModel());
+            statement.setString(2, event.transactionId());
+        });
+        return restarted > 0;
+    }
+
+    @Override
+    public void recordProcessingFailure(TransactionEvent event, RuntimeException failure) {
+        if (!enabled) {
+            return;
+        }
+        execute("""
+                UPDATE fraud_transaction_processing
+                SET status = 'FAILED',
+                    error_message = ?,
+                    updated_timestamp = now()
+                WHERE transaction_id = ?
+                """, statement -> {
+            statement.setString(1, truncate(failure.getMessage(), 1000));
+            statement.setString(2, event.transactionId());
+        });
     }
 
     @Override
@@ -234,13 +295,34 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
                     inference_timestamp = EXCLUDED.inference_timestamp
                 """, statement -> {
             statement.setString(1, decision.transactionId());
-            statement.setString(2, decision.model().name());
-            statement.setString(3, "demo");
+            statement.setString(2, decision.model());
+            statement.setString(3, decision.modelVersion());
             statement.setBigDecimal(4, decision.inferenceResult().fraudScore());
             statement.setString(5, decision.decision().name());
             statement.setString(6, json(decision.inferenceResult().featuresUsed()));
             statement.setTimestamp(7, timestamp(decision.decidedAt()));
         });
+        execute("""
+                UPDATE fraud_transaction_processing
+                SET status = 'PREDICTION_RECORDED',
+                    error_message = NULL,
+                    updated_timestamp = now()
+                WHERE transaction_id = ?
+                """, statement -> statement.setString(1, decision.transactionId()));
+    }
+
+    @Override
+    public void recordDecisionPublished(FraudDecision decision) {
+        if (!enabled) {
+            return;
+        }
+        execute("""
+                UPDATE fraud_transaction_processing
+                SET status = 'DECISION_PUBLISHED',
+                    error_message = NULL,
+                    updated_timestamp = now()
+                WHERE transaction_id = ?
+                """, statement -> statement.setString(1, decision.transactionId()));
     }
 
     private void execute(String sql) {
@@ -249,10 +331,14 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
     }
 
     private void execute(String sql, SqlBinder binder) {
+        executeUpdate(sql, binder);
+    }
+
+    private int executeUpdate(String sql, SqlBinder binder) {
         try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
              PreparedStatement statement = connection.prepareStatement(sql)) {
             binder.bind(statement);
-            statement.executeUpdate();
+            return statement.executeUpdate();
         } catch (SQLException e) {
             Log.warnf(e, "Failed to write fraud offline data sink");
             throw new IllegalStateException("Failed to write fraud offline data sink", e);
@@ -269,6 +355,13 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to serialize feature list", e);
         }
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 
     @FunctionalInterface

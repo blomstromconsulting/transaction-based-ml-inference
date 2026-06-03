@@ -1,6 +1,5 @@
 package com.example.fraud.infrastructure.config;
 
-import com.example.fraud.domain.model.FraudModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithName;
 
@@ -9,7 +8,7 @@ import java.util.Map;
 
 @ConfigMapping(prefix = "fraud")
 public interface ModelFeatureServiceMapping {
-    Map<FraudModel, ModelConfig> model();
+    Map<String, ModelConfig> model();
 
     interface ModelConfig {
         @WithName("kserve-url")
@@ -17,5 +16,8 @@ public interface ModelFeatureServiceMapping {
 
         @WithName("feature-service")
         String featureService();
+
+        @WithName("model-version")
+        String modelVersion();
     }
 }

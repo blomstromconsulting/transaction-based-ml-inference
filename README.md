@@ -176,6 +176,8 @@ The Java code follows Hexagonal Architecture:
 
 The domain layer has no Redis, Feast, KServe, Kafka, HTTP, or Kubernetes dependencies.
 
+The transaction service treats the requested model as a configured model id string, not a source-code enum. To add another model, add its `fraud.model.<MODEL_ID>.kserve-url`, `feature-service`, and `model-version` entries, then deploy the matching Feature Service and predictor.
+
 ## Models and Feature Services
 
 Model A is the baseline model. It combines event-time transaction fields with common customer features:
@@ -195,7 +197,7 @@ Model B extends Model A with more customer and merchant features:
 - `customer_cross_border_count_7d`
 - `merchant_risk_score`
 
-The Feast repository under [feast](./feast) defines common reusable customer features and composes them into separate Feature Services for each model.
+The Feast repository under [feast](./feast) defines common reusable customer features and composes them into separate Feature Services for each model. Training scripts read [training/model_catalog.json](./training/model_catalog.json) so model feature references and training columns stay centralized for the offline path.
 
 ## Redis Aggregation
 
@@ -215,12 +217,12 @@ For higher-volume production systems, replace the in-service Redis window calcul
 The transformer scaffold is in [kserve/transformer](./kserve/transformer). It:
 
 1. Receives the inference request containing the transaction event and target model.
-2. Resolves `MODEL_A` to `fraud_model_a_feature_service` or `MODEL_B` to `fraud_model_b_feature_service`.
+2. Resolves the model's configured Feast Feature Service.
 3. Extracts entity keys such as `customer_id` and `merchant_id`.
 4. Calls Feast online serving.
 5. Feast reads Redis-backed online feature values.
 6. Validates that every feature required by the Feature Service was returned and is non-null.
-7. Merges transaction fields with online features.
+7. Merges required transaction fields with Feature-Service-defined online features.
 8. Builds an explicit model input payload.
 9. Lets KServe forward the payload to the predictor.
 10. Converts predictor output into a fraud decision response.
@@ -245,28 +247,44 @@ fraud.feast.url=http://feast-feature-server:6566
 
 fraud.model.MODEL_A.kserve-url=http://fraud-model-a.default/v1/models/fraud-model-a:predict
 fraud.model.MODEL_A.feature-service=fraud_model_a_feature_service
+fraud.model.MODEL_A.model-version=demo-a-v1
 
 fraud.model.MODEL_B.kserve-url=http://fraud-model-b.default/v1/models/fraud-model-b:predict
 fraud.model.MODEL_B.feature-service=fraud_model_b_feature_service
+fraud.model.MODEL_B.model-version=demo-b-v1
+
+fraud.features.home-country=SE
+fraud.kserve.connect-timeout-ms=2000
+fraud.kserve.read-timeout-ms=5000
 ```
 
 ## Run Locally
 
-Start Redis:
+Start Redis and the local mock predictor:
 
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
 ```
 
+In another terminal:
+
+```bash
+python scripts/local_mock_predictor.py --port 18081
+```
+
 Run Quarkus:
 
 ```bash
+FRAUD_MODEL_MODEL_A_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-a:predict \
+FRAUD_MODEL_MODEL_B_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-b:predict \
 ./mvnw quarkus:dev
 ```
 
 If Maven wrapper is not present, use:
 
 ```bash
+FRAUD_MODEL_MODEL_A_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-a:predict \
+FRAUD_MODEL_MODEL_B_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-b:predict \
 mvn quarkus:dev
 ```
 
@@ -295,6 +313,8 @@ Example response:
 {
   "transaction_id": "tx-10001",
   "model": "MODEL_B",
+  "model_version": "demo-b-v1",
+  "feature_service": "fraud_model_b_feature_service",
   "fraud_score": 0.91,
   "decision": "DECLINE",
   "features_used": [
@@ -373,6 +393,25 @@ Build and publish images for:
 - Fraud feature transformer
 - Model A predictor
 - Model B predictor
+
+Example image build commands:
+
+```bash
+export REGISTRY=registry.example.com/fraud-demo
+export TAG=1.0.0
+
+docker build -f src/main/docker/Dockerfile.jvm -t $REGISTRY/transaction-events:$TAG .
+docker build -f feast/Dockerfile -t $REGISTRY/fraud-feast-repo:$TAG .
+docker build -f feast/writer/Dockerfile -t $REGISTRY/fraud-feast-writer:$TAG .
+docker build -f kserve/transformer/Dockerfile -t $REGISTRY/fraud-feature-transformer:$TAG .
+docker build -f kserve/java-transformer/Dockerfile -t $REGISTRY/fraud-java-transformer:$TAG .
+
+docker push $REGISTRY/transaction-events:$TAG
+docker push $REGISTRY/fraud-feast-repo:$TAG
+docker push $REGISTRY/fraud-feast-writer:$TAG
+docker push $REGISTRY/fraud-feature-transformer:$TAG
+docker push $REGISTRY/fraud-java-transformer:$TAG
+```
 
 Then apply manifests:
 
@@ -484,6 +523,8 @@ Expected response shape:
 ```json
 {
   "model": "MODEL_B",
+  "model_version": "demo-b-v1",
+  "feature_service": "fraud_model_b_feature_service",
   "decision": "DECLINE",
   "transaction_id": "tx-real-10006",
   "fraud_score": 0.91,
@@ -536,6 +577,7 @@ When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` servic
 - customer aggregate feature rows into `customer_transaction_stats`
 - merchant risk feature rows into `merchant_risk_features`
 - model scores, decisions, and feature names into `fraud_prediction_logs`
+- processing status and retry state into `fraud_transaction_processing`
 
 The application does not create fraud labels. Labels are delayed outcomes and must be loaded into `fraud_labels` from review, chargeback, or dispute systems before a transaction can be used as a supervised training example.
 
@@ -548,6 +590,7 @@ The training schema in [training/sql/schema.sql](./training/sql/schema.sql) defi
 - `customer_transaction_stats`: historical customer aggregate features.
 - `merchant_risk_features`: historical merchant features.
 - `fraud_prediction_logs`: optional model score and decision audit records.
+- `fraud_transaction_processing`: processing ledger for started, failed, prediction-recorded, and decision-published states.
 - `fraud_training_examples`: transaction and label view used as the Feast entity dataframe.
 
 For a standalone local retraining demo, load sample labeled data into Postgres:
@@ -608,4 +651,14 @@ Run unit tests:
 
 ```bash
 mvn test
+
+cd kserve/java-transformer
+mvn test
+cd ../..
+
+cd kserve/transformer
+python -m unittest test_transformer.py
+cd ../..
+
+helm template fraud-demo ./charts/fraud-inference-demo --namespace fraud-demo
 ```

@@ -14,5 +14,6 @@ data:
   fraud.model.{{ $modelName }}.kserve-url: {{ $model.kserveUrl | quote }}
   {{- end }}
   fraud.model.{{ $modelName }}.feature-service: {{ $model.featureService | quote }}
+  fraud.model.{{ $modelName }}.model-version: {{ $model.modelVersion | default "demo" | quote }}
   {{ $modelName }}_FEATURE_SERVICE: {{ $model.featureService | quote }}
 {{- end }}

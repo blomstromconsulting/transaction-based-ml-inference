@@ -10,44 +10,26 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-
-MODEL_COLUMNS = {
-    "MODEL_A": {
-        "numeric": [
-            "transaction_amount",
-            "customer_transaction_count_1h",
-            "customer_transaction_count_24h",
-            "customer_total_amount_24h",
-            "customer_avg_amount_7d",
-        ],
-        "categorical": ["transaction_country", "merchant_category"],
-    },
-    "MODEL_B": {
-        "numeric": [
-            "transaction_amount",
-            "customer_transaction_count_1h",
-            "customer_transaction_count_24h",
-            "customer_total_amount_24h",
-            "customer_avg_amount_7d",
-            "customer_max_amount_7d",
-            "customer_distinct_merchants_24h",
-            "customer_cross_border_count_7d",
-            "merchant_risk_score",
-        ],
-        "categorical": ["transaction_country", "merchant_category"],
-    },
-}
+from model_catalog import load_model_catalog
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_COLUMNS, default="MODEL_B")
+    parser.add_argument("--model", default="MODEL_B")
+    parser.add_argument("--model-catalog", default="training/model_catalog.json")
     parser.add_argument("--input", default="training/output/training_dataset.parquet")
     parser.add_argument("--output", default="training/output/model_b.joblib")
     args = parser.parse_args()
+    catalog = load_model_catalog(args.model_catalog)
+    if args.model not in catalog:
+        raise ValueError(f"Unknown model {args.model}; available models: {', '.join(sorted(catalog))}")
 
     df = pd.read_parquet(args.input).sort_values("event_timestamp")
-    columns = MODEL_COLUMNS[args.model]
+    model_config = catalog[args.model]
+    columns = {
+        "numeric": model_config["numeric_columns"],
+        "categorical": model_config["categorical_columns"],
+    }
     X = df[columns["numeric"] + columns["categorical"]]
     y = df["is_fraud"]
 
@@ -84,7 +66,12 @@ def main() -> None:
 
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"model": args.model, "pipeline": pipeline, "columns": columns}, output)
+    joblib.dump({
+        "model": args.model,
+        "model_version": model_config["model_version"],
+        "pipeline": pipeline,
+        "columns": columns,
+    }, output)
     print(f"Wrote model artifact to {output}")
 
 

@@ -123,9 +123,11 @@ models:
   MODEL_A:
     kserveUrl: http://fraud-model-a.default/v1/models/fraud-model-a:predict
     featureService: fraud_model_a_feature_service
+    modelVersion: demo-a-v1
   MODEL_B:
     kserveUrl: http://fraud-model-b.default/v1/models/fraud-model-b:predict
     featureService: fraud_model_b_feature_service
+    modelVersion: demo-b-v1
 ```
 
-These values are projected into the Quarkus application and the KServe transformer through a generated ConfigMap.
+These values are projected into the Quarkus application and the KServe transformer through a generated ConfigMap. The Quarkus transaction service uses configured model ids, so adding a model is a values/config change as long as the Feature Service and predictor are deployed.

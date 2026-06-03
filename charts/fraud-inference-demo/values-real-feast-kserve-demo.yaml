@@ -72,6 +72,7 @@ models:
     inferenceServiceName: fraud-model-a
     kserveUrl: http://fraud-model-a-transformer.fraud-demo.svc.cluster.local/v1/models/fraud-model-a:predict
     featureService: fraud_model_a_feature_service
+    modelVersion: demo-a-v1
     predictorImage:
       repository: python
       tag: 3.11-slim
@@ -102,6 +103,7 @@ models:
     inferenceServiceName: fraud-model-b
     kserveUrl: http://fraud-model-b-transformer.fraud-demo.svc.cluster.local/v1/models/fraud-model-b:predict
     featureService: fraud_model_b_feature_service
+    modelVersion: demo-b-v1
     predictorImage:
       repository: python
       tag: 3.11-slim

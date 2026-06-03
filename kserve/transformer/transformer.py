@@ -56,7 +56,7 @@ class FraudFeatureTransformer(kserve.Model):
         required_features = self._feature_names(feature_refs)
         self._validate_online_features(feature_service, transaction, required_features, flattened_features)
 
-        model_input = self._model_input(model_name, transaction, flattened_features)
+        model_input = self._model_input(transaction, flattened_features, required_features)
         self._last_context = {
             "model": model_name,
             "feature_service": feature_service,
@@ -86,26 +86,15 @@ class FraudFeatureTransformer(kserve.Model):
             },
         }
 
-    def _model_input(self, model_name: str, transaction: Dict, features: Dict) -> Dict:
-        base = {
+    def _model_input(self, transaction: Dict, features: Dict, required_features: List[str]) -> Dict:
+        model_input = {
             "transaction_amount": transaction["transaction_amount"],
             "transaction_country": transaction["transaction_country"],
             "merchant_category": transaction["merchant_category"],
-            "customer_transaction_count_1h": self._feature(features, "customer_transaction_count_1h", 0),
-            "customer_transaction_count_24h": self._feature(features, "customer_transaction_count_24h", 0),
-            "customer_total_amount_24h": self._feature(features, "customer_total_amount_24h", 0.0),
-            "customer_avg_amount_7d": self._feature(features, "customer_avg_amount_7d", 0.0),
         }
-        if model_name == "MODEL_B":
-            base.update(
-                {
-                    "customer_max_amount_7d": self._feature(features, "customer_max_amount_7d", 0.0),
-                    "customer_distinct_merchants_24h": self._feature(features, "customer_distinct_merchants_24h", 0),
-                    "customer_cross_border_count_7d": self._feature(features, "customer_cross_border_count_7d", 0),
-                    "merchant_risk_score": self._feature(features, "merchant_risk_score", 0.0),
-                }
-            )
-        return base
+        for feature in required_features:
+            model_input[feature] = self._feature(features, feature, 0)
+        return model_input
 
     def _feature_refs(self, feature_service: str) -> List[str]:
         service = self.store.get_feature_service(feature_service)

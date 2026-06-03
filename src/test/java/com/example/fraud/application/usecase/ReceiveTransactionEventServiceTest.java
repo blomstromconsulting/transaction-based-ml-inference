@@ -5,7 +5,6 @@ import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.FraudDecisionType;
 import com.example.fraud.domain.model.FraudInferenceRequest;
 import com.example.fraud.domain.model.FraudInferenceResult;
-import com.example.fraud.domain.model.FraudModel;
 import com.example.fraud.domain.model.TransactionEvent;
 import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
 import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
@@ -84,13 +83,15 @@ class ReceiveTransactionEventServiceTest {
         assertTrue(published.get());
         assertEquals("tx-10001", decision.transactionId());
         assertEquals(FraudDecisionType.DECLINE, decision.decision());
-        assertEquals(FraudModel.MODEL_B, decision.model());
+        assertEquals("MODEL_B", decision.model());
     }
 
     private FraudInferenceResult result(FraudInferenceRequest request) {
         return new FraudInferenceResult(
                 request.transactionEvent().transactionId(),
                 request.model(),
+                "test-version",
+                "test_feature_service",
                 new BigDecimal("0.91"),
                 FraudDecisionType.DECLINE,
                 List.of("transaction_amount", "customer_transaction_count_24h"),
@@ -108,6 +109,6 @@ class ReceiveTransactionEventServiceTest {
                 "eur",
                 "se",
                 Instant.parse("2026-05-29T12:00:00Z"),
-                FraudModel.MODEL_B);
+                "MODEL_B");
     }
 }

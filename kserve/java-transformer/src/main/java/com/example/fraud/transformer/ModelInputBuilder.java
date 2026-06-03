@@ -17,25 +17,19 @@ public class ModelInputBuilder {
         this.strictValidation = strictValidation;
     }
 
-    public Map<String, Object> build(FraudModel model, Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
+    public Map<String, Object> build(Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
         validateTransaction(transaction);
-        validateOnlineFeatures(model, transaction, onlineFeatures);
+        validateOnlineFeatures(transaction, onlineFeatures);
 
         Map<String, Object> modelInput = new LinkedHashMap<>();
         modelInput.put("transaction_amount", transaction.get("transaction_amount"));
         modelInput.put("transaction_country", transaction.get("transaction_country"));
         modelInput.put("merchant_category", transaction.get("merchant_category"));
-        modelInput.put("customer_transaction_count_1h", feature(onlineFeatures, "customer_transaction_count_1h", 0));
-        modelInput.put("customer_transaction_count_24h", feature(onlineFeatures, "customer_transaction_count_24h", 0));
-        modelInput.put("customer_total_amount_24h", feature(onlineFeatures, "customer_total_amount_24h", 0.0));
-        modelInput.put("customer_avg_amount_7d", feature(onlineFeatures, "customer_avg_amount_7d", 0.0));
-
-        if (model == FraudModel.MODEL_B) {
-            modelInput.put("customer_max_amount_7d", feature(onlineFeatures, "customer_max_amount_7d", 0.0));
-            modelInput.put("customer_distinct_merchants_24h", feature(onlineFeatures, "customer_distinct_merchants_24h", 0));
-            modelInput.put("customer_cross_border_count_7d", feature(onlineFeatures, "customer_cross_border_count_7d", 0));
-            modelInput.put("merchant_risk_score", feature(onlineFeatures, "merchant_risk_score", 0.0));
-        }
+        onlineFeatures.forEach((name, value) -> {
+            if (ModelFeatureSchema.isModelInputOnlineFeature(name)) {
+                modelInput.put(name, feature(onlineFeatures, name, 0));
+            }
+        });
 
         return modelInput;
     }
@@ -60,16 +54,19 @@ public class ModelInputBuilder {
         }
     }
 
-    private void validateOnlineFeatures(FraudModel model, Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
+    private void validateOnlineFeatures(Map<String, Object> transaction, Map<String, Object> onlineFeatures) {
         if (!strictValidation) {
             return;
         }
-        List<String> missing = ModelFeatureSchema.requiredOnlineFeatures(model).stream()
-                .filter(feature -> isMissing(onlineFeatures.get(feature)))
+        List<String> missing = onlineFeatures.entrySet().stream()
+                .filter(entry -> ModelFeatureSchema.isModelInputOnlineFeature(entry.getKey()))
+                .filter(entry -> isMissing(entry.getValue()))
+                .map(Map.Entry::getKey)
                 .toList();
-        if (!missing.isEmpty()) {
+        if (onlineFeatures.isEmpty() || !missing.isEmpty()) {
             throw new FeatureValidationException(
-                    "Missing required online features from Feast: " + String.join(", ", missing)
+                    "Missing required online features from Feast: "
+                            + (missing.isEmpty() ? "<empty feature response>" : String.join(", ", missing))
                             + "; transaction_id=" + transaction.getOrDefault("transaction_id", "<unknown>")
                             + "; customer_id=" + transaction.getOrDefault("customer_id", "<unknown>")
                             + "; merchant_id=" + transaction.getOrDefault("merchant_id", "<unknown>"));

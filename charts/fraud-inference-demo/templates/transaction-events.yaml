@@ -64,6 +64,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "fraud-inference-demo.configName" $ }}
                   key: fraud.model.{{ $modelName }}.feature-service
+            - name: FRAUD_MODEL_{{ $modelName }}_MODEL_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "fraud-inference-demo.configName" $ }}
+                  key: fraud.model.{{ $modelName }}.model-version
 {{- end }}
           {{- with .Values.transactionEvents.resources }}
           resources:

@@ -9,6 +9,8 @@ import java.util.List;
 public record FraudDecisionResponse(
         @JsonProperty("transaction_id") String transactionId,
         String model,
+        @JsonProperty("model_version") String modelVersion,
+        @JsonProperty("feature_service") String featureService,
         @JsonProperty("fraud_score") BigDecimal fraudScore,
         String decision,
         @JsonProperty("features_used") List<String> featuresUsed) {
@@ -16,7 +18,9 @@ public record FraudDecisionResponse(
     public static FraudDecisionResponse from(FraudDecision decision) {
         return new FraudDecisionResponse(
                 decision.transactionId(),
-                decision.model().name(),
+                decision.model(),
+                decision.modelVersion(),
+                decision.inferenceResult().featureService(),
                 decision.inferenceResult().fraudScore(),
                 decision.decision().name(),
                 decision.inferenceResult().featuresUsed());

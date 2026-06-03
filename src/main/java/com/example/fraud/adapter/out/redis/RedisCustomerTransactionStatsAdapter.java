@@ -9,6 +9,7 @@ import io.vertx.mutiny.redis.client.Redis;
 import io.vertx.mutiny.redis.client.Request;
 import io.vertx.mutiny.redis.client.Response;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -25,9 +26,13 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
     private static final Duration WINDOW_7D = Duration.ofDays(7);
 
     private final Redis redis;
+    private final String homeCountry;
 
-    public RedisCustomerTransactionStatsAdapter(Redis redis) {
+    public RedisCustomerTransactionStatsAdapter(
+            Redis redis,
+            @ConfigProperty(name = "fraud.features.home-country", defaultValue = "SE") String homeCountry) {
         this.redis = redis;
+        this.homeCountry = homeCountry.toUpperCase();
     }
 
     @Override
@@ -131,7 +136,7 @@ public class RedisCustomerTransactionStatsAdapter implements CustomerTransaction
             totalAmountCents += amountCents;
             maxAmountCents = Math.max(maxAmountCents, amountCents);
             merchants.add(parts[2]);
-            if (!"SE".equalsIgnoreCase(parts[3])) {
+            if (!homeCountry.equalsIgnoreCase(parts[3])) {
                 crossBorderCount++;
             }
         }

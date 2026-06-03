@@ -6,6 +6,13 @@ import com.example.fraud.domain.model.MerchantFeatureRow;
 import com.example.fraud.domain.model.TransactionEvent;
 
 public interface OfflineDataSinkPort {
+    default boolean recordProcessingStarted(TransactionEvent event) {
+        return true;
+    }
+
+    default void recordProcessingFailure(TransactionEvent event, RuntimeException failure) {
+    }
+
     void recordTransaction(TransactionEvent event);
 
     void recordCustomerFeatures(CustomerFeatureRow row);
@@ -13,4 +20,7 @@ public interface OfflineDataSinkPort {
     void recordMerchantFeatures(MerchantFeatureRow row);
 
     void recordPrediction(FraudDecision decision);
+
+    default void recordDecisionPublished(FraudDecision decision) {
+    }
 }

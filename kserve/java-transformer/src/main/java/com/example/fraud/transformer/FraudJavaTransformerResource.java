@@ -52,17 +52,17 @@ public class FraudJavaTransformerResource {
     @POST
     @Path("/v1/models/{modelName}:predict")
     public FraudResponse predict(@PathParam("modelName") String modelName, KServeEnvelope envelope) {
-        FraudModel model = resolveModel(envelope);
+        String model = resolveModel(envelope);
         String featureService = resolveFeatureService(model, envelope);
         Map<String, Object> transaction = Objects.requireNonNull(envelope.transaction(), "transaction is required");
 
         Map<String, Object> onlineFeatures = lookupFeatures(featureService, transaction);
-        Map<String, Object> modelInput = modelInputBuilder.build(model, transaction, onlineFeatures);
+        Map<String, Object> modelInput = modelInputBuilder.build(transaction, onlineFeatures);
         PredictorRequest predictorRequest = new PredictorRequest(
                 List.of(modelInput),
                 Map.of(
                         "transaction_id", transaction.get("transaction_id"),
-                        "model", model.name(),
+                        "model", model,
                         "feature_service", featureService,
                         "features_used", List.copyOf(modelInput.keySet())));
 
@@ -73,23 +73,23 @@ public class FraudJavaTransformerResource {
                 decision(score),
                 List.copyOf(modelInput.keySet()),
                 Map.of(
-                        "model", model.name(),
+                        "model", model,
                         "feature_service", featureService,
                         "source", "java-kserve-transformer-feast"));
     }
 
-    private FraudModel resolveModel(KServeEnvelope envelope) {
+    private String resolveModel(KServeEnvelope envelope) {
         String modelName = envelope.model() == null || envelope.model().isBlank()
                 ? targetModel
-                : envelope.model();
-        return FraudModel.valueOf(modelName);
+                : envelope.model().trim();
+        return modelName.toUpperCase();
     }
 
-    private String resolveFeatureService(FraudModel model, KServeEnvelope envelope) {
+    private String resolveFeatureService(String model, KServeEnvelope envelope) {
         if (envelope.featureService() != null && !envelope.featureService().isBlank()) {
             return envelope.featureService();
         }
-        return model == FraudModel.MODEL_A ? modelAFeatureService : modelBFeatureService;
+        return "MODEL_A".equals(model) ? modelAFeatureService : modelBFeatureService;
     }
 
     private Map<String, Object> lookupFeatures(String featureService, Map<String, Object> transaction) {

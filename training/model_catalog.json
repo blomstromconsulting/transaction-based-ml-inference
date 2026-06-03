@@ -1,0 +1,50 @@
+{
+  "MODEL_A": {
+    "model_version": "demo-a-v1",
+    "feature_refs": [
+      "customer_transaction_stats_view:customer_transaction_count_1h",
+      "customer_transaction_stats_view:customer_transaction_count_24h",
+      "customer_transaction_stats_view:customer_total_amount_24h",
+      "customer_transaction_stats_view:customer_avg_amount_7d"
+    ],
+    "numeric_columns": [
+      "transaction_amount",
+      "customer_transaction_count_1h",
+      "customer_transaction_count_24h",
+      "customer_total_amount_24h",
+      "customer_avg_amount_7d"
+    ],
+    "categorical_columns": [
+      "transaction_country",
+      "merchant_category"
+    ]
+  },
+  "MODEL_B": {
+    "model_version": "demo-b-v1",
+    "feature_refs": [
+      "customer_transaction_stats_view:customer_transaction_count_1h",
+      "customer_transaction_stats_view:customer_transaction_count_24h",
+      "customer_transaction_stats_view:customer_total_amount_24h",
+      "customer_transaction_stats_view:customer_avg_amount_7d",
+      "customer_transaction_stats_view:customer_max_amount_7d",
+      "customer_transaction_stats_view:customer_distinct_merchants_24h",
+      "customer_transaction_stats_view:customer_cross_border_count_7d",
+      "merchant_risk_view:merchant_risk_score"
+    ],
+    "numeric_columns": [
+      "transaction_amount",
+      "customer_transaction_count_1h",
+      "customer_transaction_count_24h",
+      "customer_total_amount_24h",
+      "customer_avg_amount_7d",
+      "customer_max_amount_7d",
+      "customer_distinct_merchants_24h",
+      "customer_cross_border_count_7d",
+      "merchant_risk_score"
+    ],
+    "categorical_columns": [
+      "transaction_country",
+      "merchant_category"
+    ]
+  }
+}

@@ -4,33 +4,19 @@ from pathlib import Path
 
 from feast import FeatureStore
 
-
-MODEL_FEATURES = {
-    "MODEL_A": [
-        "customer_transaction_stats_view:customer_transaction_count_1h",
-        "customer_transaction_stats_view:customer_transaction_count_24h",
-        "customer_transaction_stats_view:customer_total_amount_24h",
-        "customer_transaction_stats_view:customer_avg_amount_7d",
-    ],
-    "MODEL_B": [
-        "customer_transaction_stats_view:customer_transaction_count_1h",
-        "customer_transaction_stats_view:customer_transaction_count_24h",
-        "customer_transaction_stats_view:customer_total_amount_24h",
-        "customer_transaction_stats_view:customer_avg_amount_7d",
-        "customer_transaction_stats_view:customer_max_amount_7d",
-        "customer_transaction_stats_view:customer_distinct_merchants_24h",
-        "customer_transaction_stats_view:customer_cross_border_count_7d",
-        "merchant_risk_view:merchant_risk_score",
-    ],
-}
+from model_catalog import load_model_catalog
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", choices=MODEL_FEATURES, default="MODEL_B")
+    parser.add_argument("--model", default="MODEL_B")
+    parser.add_argument("--model-catalog", default="training/model_catalog.json")
     parser.add_argument("--repo", default="feast")
     parser.add_argument("--output", default="training/output/training_dataset.parquet")
     args = parser.parse_args()
+    catalog = load_model_catalog(args.model_catalog)
+    if args.model not in catalog:
+        raise ValueError(f"Unknown model {args.model}; available models: {', '.join(sorted(catalog))}")
 
     os.environ.setdefault("FEAST_OFFLINE_STORE_TYPE", "postgres")
     store = FeatureStore(repo_path=args.repo)
@@ -48,7 +34,7 @@ def main() -> None:
     """
     dataset = store.get_historical_features(
         entity_df=entity_query,
-        features=MODEL_FEATURES[args.model],
+        features=catalog[args.model]["feature_refs"],
     ).to_df()
 
     output = Path(args.output)

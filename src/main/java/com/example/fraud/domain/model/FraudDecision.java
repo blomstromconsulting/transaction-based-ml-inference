@@ -5,7 +5,8 @@ import java.time.Instant;
 public record FraudDecision(
         String transactionId,
         String customerId,
-        FraudModel model,
+        String model,
+        String modelVersion,
         FraudDecisionType decision,
         FraudInferenceResult inferenceResult,
         Instant decidedAt) {

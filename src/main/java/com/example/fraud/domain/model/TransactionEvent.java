@@ -14,7 +14,8 @@ public record TransactionEvent(
         String currency,
         String country,
         Instant timestamp,
-        FraudModel requestedModel) {
+        String requestedModel) {
+    public static final String DEFAULT_MODEL = "MODEL_A";
 
     public TransactionEvent {
         transactionId = requireText(transactionId, "transactionId");
@@ -29,7 +30,9 @@ public record TransactionEvent(
         currency = requireText(currency, "currency").toUpperCase();
         country = requireText(country, "country").toUpperCase();
         timestamp = Objects.requireNonNull(timestamp, "timestamp is required");
-        requestedModel = Objects.requireNonNullElse(requestedModel, FraudModel.MODEL_A);
+        requestedModel = requestedModel == null || requestedModel.isBlank()
+                ? DEFAULT_MODEL
+                : requestedModel.trim().toUpperCase();
     }
 
     private static String requireText(String value, String field) {

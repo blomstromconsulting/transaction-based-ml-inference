@@ -13,8 +13,11 @@ When `fraud.offline-store.enabled=true`, the Quarkus application writes live tra
 - `customer_transaction_stats`: historical customer aggregate feature values.
 - `merchant_risk_features`: historical merchant feature values.
 - `fraud_prediction_logs`: optional model score and decision audit trail.
+- `fraud_transaction_processing`: processing status for live inference attempts.
 
 `fraud_training_examples` joins transactions and labels into the entity dataframe used by Feast historical retrieval.
+
+Model-specific Feast feature references and training columns are defined in [model_catalog.json](./model_catalog.json). Add a new model there before building a dataset or training artifact for it.
 
 ## Local Setup
 

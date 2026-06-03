@@ -7,6 +7,7 @@ import com.example.fraud.domain.model.FraudInferenceRequest;
 import com.example.fraud.domain.model.FraudInferenceResult;
 import com.example.fraud.domain.model.MerchantFeatureRow;
 import com.example.fraud.domain.model.TransactionEvent;
+import com.example.fraud.domain.model.TransactionAlreadyProcessedException;
 import com.example.fraud.domain.port.in.ReceiveTransactionEventUseCase;
 import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
 import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
@@ -43,6 +44,19 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
     @Override
     public FraudDecision receive(TransactionEvent event) {
         TransactionEvent normalized = normalizer.normalize(event);
+        if (!offlineDataSinkPort.recordProcessingStarted(normalized)) {
+            throw new TransactionAlreadyProcessedException(normalized.transactionId());
+        }
+
+        try {
+            return process(normalized);
+        } catch (RuntimeException e) {
+            recordFailure(normalized, e);
+            throw e;
+        }
+    }
+
+    private FraudDecision process(TransactionEvent normalized) {
         offlineDataSinkPort.recordTransaction(normalized);
 
         CustomerTransactionStats stats = updateStatsUseCase.update(normalized);
@@ -59,11 +73,21 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
                 normalized.transactionId(),
                 normalized.customerId(),
                 normalized.requestedModel(),
+                result.modelVersion(),
                 result.decision(),
                 result,
                 Instant.now());
-        decisionPublisherPort.publish(decision);
         offlineDataSinkPort.recordPrediction(decision);
+        decisionPublisherPort.publish(decision);
+        offlineDataSinkPort.recordDecisionPublished(decision);
         return decision;
+    }
+
+    private void recordFailure(TransactionEvent normalized, RuntimeException failure) {
+        try {
+            offlineDataSinkPort.recordProcessingFailure(normalized, failure);
+        } catch (RuntimeException ignored) {
+            // Preserve the original workflow failure for callers.
+        }
     }
 }

@@ -1,6 +1,5 @@
 package com.example.fraud.application.usecase;
 
-import com.example.fraud.domain.model.FraudModel;
 import com.example.fraud.domain.model.TransactionEvent;
 import org.junit.jupiter.api.Test;
 
@@ -20,13 +19,13 @@ class TransactionEventTest {
         assertEquals("EUR", event.currency());
         assertEquals("SE", event.country());
         assertEquals("electronics", event.merchantCategory());
-        assertEquals(FraudModel.MODEL_A, event.requestedModel());
+        assertEquals("MODEL_A", event.requestedModel());
     }
 
     @Test
     void rejectsNonPositiveAmount() {
         assertThrows(IllegalArgumentException.class, () -> new TransactionEvent(
                 "tx-1", "cust-1", "card-1", "merchant-1", "electronics",
-                BigDecimal.ZERO, "EUR", "SE", Instant.parse("2026-05-29T12:00:00Z"), FraudModel.MODEL_A));
+                BigDecimal.ZERO, "EUR", "SE", Instant.parse("2026-05-29T12:00:00Z"), "MODEL_A"));
     }
 }

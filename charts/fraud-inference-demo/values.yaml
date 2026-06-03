@@ -89,6 +89,7 @@ models:
     inferenceServiceName: fraud-model-a
     kserveUrl: http://fraud-model-a.default/v1/models/fraud-model-a:predict
     featureService: fraud_model_a_feature_service
+    modelVersion: demo-a-v1
     predictorImage:
       repository: ghcr.io/example/fraud-model-a
       tag: latest
@@ -100,6 +101,7 @@ models:
     inferenceServiceName: fraud-model-b
     kserveUrl: http://fraud-model-b.default/v1/models/fraud-model-b:predict
     featureService: fraud_model_b_feature_service
+    modelVersion: demo-b-v1
     predictorImage:
       repository: ghcr.io/example/fraud-model-b
       tag: latest

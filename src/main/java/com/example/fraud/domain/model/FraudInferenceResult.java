@@ -6,7 +6,9 @@ import java.util.Map;
 
 public record FraudInferenceResult(
         String transactionId,
-        FraudModel model,
+        String model,
+        String modelVersion,
+        String featureService,
         BigDecimal fraudScore,
         FraudDecisionType decision,
         List<String> featuresUsed,

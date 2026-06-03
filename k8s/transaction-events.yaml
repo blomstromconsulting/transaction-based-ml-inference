@@ -43,6 +43,11 @@ spec:
                 configMapKeyRef:
                   name: fraud-model-feature-config
                   key: fraud.model.MODEL_A.feature-service
+            - name: FRAUD_MODEL_MODEL_A_MODEL_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_A.model-version
             - name: FRAUD_MODEL_MODEL_B_KSERVE_URL
               valueFrom:
                 configMapKeyRef:
@@ -53,6 +58,11 @@ spec:
                 configMapKeyRef:
                   name: fraud-model-feature-config
                   key: fraud.model.MODEL_B.feature-service
+            - name: FRAUD_MODEL_MODEL_B_MODEL_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: fraud-model-feature-config
+                  key: fraud.model.MODEL_B.model-version
 ---
 apiVersion: v1
 kind: Service

@@ -1,7 +1,6 @@
 package com.example.fraud.adapter.in.rest;
 
 import com.example.fraud.domain.model.FraudDecision;
-import com.example.fraud.domain.model.FraudModel;
 import com.example.fraud.domain.model.TransactionEvent;
 import com.example.fraud.domain.port.in.ReceiveTransactionEventUseCase;
 import jakarta.ws.rs.Consumes;
@@ -23,9 +22,6 @@ public class TransactionEventResource {
 
     @POST
     public Response submit(TransactionEventRequest request) {
-        FraudModel model = request.requestedModel() == null
-                ? FraudModel.MODEL_A
-                : FraudModel.valueOf(request.requestedModel());
         TransactionEvent event = new TransactionEvent(
                 request.transactionId(),
                 request.customerId(),
@@ -36,7 +32,7 @@ public class TransactionEventResource {
                 request.currency(),
                 request.country(),
                 request.timestamp(),
-                model);
+                request.requestedModel());
         FraudDecision decision = receiveTransactionEventUseCase.receive(event);
         return Response.accepted(FraudDecisionResponse.from(decision)).build();
     }

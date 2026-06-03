@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS fraud_prediction_logs (
     PRIMARY KEY (transaction_id, model, model_version)
 );
 
+CREATE TABLE IF NOT EXISTS fraud_transaction_processing (
+    transaction_id TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    started_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE OR REPLACE VIEW fraud_training_examples AS
 SELECT
     t.transaction_id,
