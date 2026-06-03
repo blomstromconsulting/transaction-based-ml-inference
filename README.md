@@ -591,7 +591,27 @@ The training schema in [training/sql/schema.sql](./training/sql/schema.sql) defi
 - `merchant_risk_features`: historical merchant features.
 - `fraud_prediction_logs`: optional model score and decision audit records.
 - `fraud_transaction_processing`: processing ledger for started, failed, prediction-recorded, and decision-published states.
-- `fraud_training_examples`: transaction and label view used as the Feast entity dataframe.
+- `fraud_label_events`: immutable label annotation history.
+- `fraud_training_examples`: transaction and latest-label view used as the Feast entity dataframe.
+
+### Annotate Confirmed Fraud
+
+Confirmed labels can be attached to historical transactions after review, chargeback, or dispute systems produce an outcome. The transaction must already exist in `fraud_transactions`.
+
+```bash
+curl -X PUT http://localhost:8080/transactions/tx-10001/label \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "is_fraud": true,
+    "label_timestamp": "2026-06-03T08:30:00Z",
+    "label_source": "chargeback",
+    "label_confidence": 1.0,
+    "annotator_id": "chargeback-system",
+    "reason_code": "confirmed_cardholder_dispute"
+  }'
+```
+
+The service upserts the current label in `fraud_labels` and appends every annotation to `fraud_label_events`. Unknown transaction ids return `404`.
 
 For a standalone local retraining demo, load sample labeled data into Postgres:
 
@@ -626,6 +646,7 @@ python feast/scripts/render_feature_store.py
 FEAST_OFFLINE_STORE_TYPE=postgres \
 python training/scripts/build_training_dataset.py \
   --model MODEL_B \
+  --min-label-age-days 14 \
   --output training/output/model_b_training.parquet
 ```
 

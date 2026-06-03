@@ -13,6 +13,7 @@ def main() -> None:
     parser.add_argument("--model-catalog", default="training/model_catalog.json")
     parser.add_argument("--repo", default="feast")
     parser.add_argument("--output", default="training/output/training_dataset.parquet")
+    parser.add_argument("--min-label-age-days", type=int, default=0)
     args = parser.parse_args()
     catalog = load_model_catalog(args.model_catalog)
     if args.model not in catalog:
@@ -20,7 +21,12 @@ def main() -> None:
 
     os.environ.setdefault("FEAST_OFFLINE_STORE_TYPE", "postgres")
     store = FeatureStore(repo_path=args.repo)
-    entity_query = """
+    label_maturity_filter = ""
+    if args.min_label_age_days > 0:
+        label_maturity_filter = f"""
+        WHERE label_timestamp <= now() - interval '{args.min_label_age_days} days'
+        """
+    entity_query = f"""
         SELECT
             transaction_id,
             customer_id,
@@ -29,8 +35,12 @@ def main() -> None:
             transaction_amount,
             transaction_country,
             merchant_category,
-            is_fraud
+            is_fraud,
+            label_timestamp,
+            label_source,
+            label_confidence
         FROM fraud_training_examples
+        {label_maturity_filter}
     """
     dataset = store.get_historical_features(
         entity_df=entity_query,

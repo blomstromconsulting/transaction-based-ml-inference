@@ -9,13 +9,14 @@ When `fraud.offline-store.enabled=true`, the Quarkus application writes live tra
 ## Data Needed
 
 - `fraud_transactions`: historical transaction facts.
-- `fraud_labels`: confirmed fraud or legitimate outcomes.
+- `fraud_labels`: latest confirmed fraud or legitimate outcome per transaction.
+- `fraud_label_events`: immutable annotation history for label changes.
 - `customer_transaction_stats`: historical customer aggregate feature values.
 - `merchant_risk_features`: historical merchant feature values.
 - `fraud_prediction_logs`: optional model score and decision audit trail.
 - `fraud_transaction_processing`: processing status for live inference attempts.
 
-`fraud_training_examples` joins transactions and labels into the entity dataframe used by Feast historical retrieval.
+`fraud_training_examples` joins transactions and latest labels into the entity dataframe used by Feast historical retrieval. The view includes label metadata such as `label_timestamp`, `label_source`, and `label_confidence`.
 
 Model-specific Feast feature references and training columns are defined in [model_catalog.json](./model_catalog.json). Add a new model there before building a dataset or training artifact for it.
 
@@ -47,6 +48,21 @@ TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
 python training/scripts/load_sample_data.py
 ```
 
+For live application data, labels are ingested through the Quarkus API after the transaction has been processed:
+
+```bash
+curl -X PUT http://localhost:8080/transactions/tx-10001/label \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "is_fraud": true,
+    "label_timestamp": "2026-06-03T08:30:00Z",
+    "label_source": "chargeback",
+    "label_confidence": 1.0,
+    "annotator_id": "chargeback-system",
+    "reason_code": "confirmed_cardholder_dispute"
+  }'
+```
+
 Render Feast for Postgres offline retrieval:
 
 ```bash
@@ -66,6 +82,7 @@ Build a point-in-time training dataset:
 FEAST_OFFLINE_STORE_TYPE=postgres \
 python training/scripts/build_training_dataset.py \
   --model MODEL_B \
+  --min-label-age-days 14 \
   --output training/output/model_b_training.parquet
 ```
 
@@ -94,6 +111,6 @@ Use those columns to compare a newly trained candidate against the confirmed `is
 ## Production Notes
 
 - Use a time-based train/validation/test split for fraud. Random splits often leak future behavior into training.
-- Labels should include `label_timestamp` so training only uses mature outcomes.
+- Labels should include `label_timestamp`; use `--min-label-age-days` so training only uses mature outcomes.
 - Keep online and offline feature definitions aligned in Feast.
 - Promote a model only after comparing precision, recall, PR-AUC, false positive cost, and false negative fraud loss.

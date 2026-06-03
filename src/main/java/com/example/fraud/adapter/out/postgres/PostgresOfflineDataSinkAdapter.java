@@ -1,9 +1,11 @@
 package com.example.fraud.adapter.out.postgres;
 
 import com.example.fraud.domain.model.CustomerFeatureRow;
+import com.example.fraud.domain.model.ConfirmedFraudLabel;
 import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.MerchantFeatureRow;
 import com.example.fraud.domain.model.TransactionEvent;
+import com.example.fraud.domain.port.out.FraudLabelRepositoryPort;
 import com.example.fraud.domain.port.out.OfflineDataSinkPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -22,7 +24,7 @@ import java.time.Instant;
 import java.util.List;
 
 @ApplicationScoped
-public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
+public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, FraudLabelRepositoryPort {
     private final ObjectMapper objectMapper;
     private final boolean enabled;
     private final boolean schemaInitEnabled;
@@ -71,6 +73,34 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
                     label_timestamp TIMESTAMPTZ NOT NULL,
                     label_source TEXT NOT NULL,
                     label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                    annotator_id TEXT,
+                    reason_code TEXT,
+                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """);
+        execute("""
+                ALTER TABLE fraud_labels
+                ADD COLUMN IF NOT EXISTS annotator_id TEXT
+                """);
+        execute("""
+                ALTER TABLE fraud_labels
+                ADD COLUMN IF NOT EXISTS reason_code TEXT
+                """);
+        execute("""
+                ALTER TABLE fraud_labels
+                ADD COLUMN IF NOT EXISTS updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+                """);
+        execute("""
+                CREATE TABLE IF NOT EXISTS fraud_label_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    transaction_id TEXT NOT NULL REFERENCES fraud_transactions(transaction_id),
+                    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
+                    label_timestamp TIMESTAMPTZ NOT NULL,
+                    label_source TEXT NOT NULL,
+                    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+                    annotator_id TEXT,
+                    reason_code TEXT,
                     created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
                 )
                 """);
@@ -132,10 +162,57 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
                     t.amount AS transaction_amount,
                     t.country AS transaction_country,
                     t.merchant_category,
-                    l.is_fraud
+                    l.is_fraud,
+                    l.label_timestamp,
+                    l.label_source,
+                    l.label_confidence,
+                    l.annotator_id,
+                    l.reason_code
                 FROM fraud_transactions t
                 JOIN fraud_labels l ON l.transaction_id = t.transaction_id
+                WHERE l.label_timestamp >= t.event_timestamp
                 """);
+    }
+
+    @Override
+    public boolean transactionExists(String transactionId) {
+        if (!enabled) {
+            throw new IllegalStateException("Offline store must be enabled to ingest fraud labels");
+        }
+        return executeExists("""
+                SELECT 1
+                FROM fraud_transactions
+                WHERE transaction_id = ?
+                """, statement -> statement.setString(1, transactionId));
+    }
+
+    @Override
+    public void upsertLabel(ConfirmedFraudLabel label) {
+        if (!enabled) {
+            throw new IllegalStateException("Offline store must be enabled to ingest fraud labels");
+        }
+        execute("""
+                INSERT INTO fraud_label_events (
+                    transaction_id, is_fraud, label_timestamp, label_source,
+                    label_confidence, annotator_id, reason_code
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, statement -> bindLabel(statement, label));
+        execute("""
+                INSERT INTO fraud_labels (
+                    transaction_id, is_fraud, label_timestamp, label_source,
+                    label_confidence, annotator_id, reason_code
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (transaction_id) DO UPDATE
+                SET is_fraud = EXCLUDED.is_fraud,
+                    label_timestamp = EXCLUDED.label_timestamp,
+                    label_source = EXCLUDED.label_source,
+                    label_confidence = EXCLUDED.label_confidence,
+                    annotator_id = EXCLUDED.annotator_id,
+                    reason_code = EXCLUDED.reason_code,
+                    updated_timestamp = now()
+                """, statement -> bindLabel(statement, label));
     }
 
     @Override
@@ -343,6 +420,29 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
             Log.warnf(e, "Failed to write fraud offline data sink");
             throw new IllegalStateException("Failed to write fraud offline data sink", e);
         }
+    }
+
+    private boolean executeExists(String sql, SqlBinder binder) {
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(statement);
+            try (java.sql.ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next();
+            }
+        } catch (SQLException e) {
+            Log.warnf(e, "Failed to read fraud offline data sink");
+            throw new IllegalStateException("Failed to read fraud offline data sink", e);
+        }
+    }
+
+    private void bindLabel(PreparedStatement statement, ConfirmedFraudLabel label) throws SQLException {
+        statement.setString(1, label.transactionId());
+        statement.setInt(2, label.fraud() ? 1 : 0);
+        statement.setTimestamp(3, timestamp(label.labelTimestamp()));
+        statement.setString(4, label.labelSource());
+        statement.setBigDecimal(5, label.labelConfidence());
+        statement.setString(6, label.annotatorId());
+        statement.setString(7, label.reasonCode());
     }
 
     private Timestamp timestamp(Instant instant) {

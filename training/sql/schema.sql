@@ -17,6 +17,21 @@ CREATE TABLE IF NOT EXISTS fraud_labels (
     label_timestamp TIMESTAMPTZ NOT NULL,
     label_source TEXT NOT NULL,
     label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    annotator_id TEXT,
+    reason_code TEXT,
+    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS fraud_label_events (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id TEXT NOT NULL REFERENCES fraud_transactions(transaction_id),
+    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
+    label_timestamp TIMESTAMPTZ NOT NULL,
+    label_source TEXT NOT NULL,
+    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    annotator_id TEXT,
+    reason_code TEXT,
     created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -73,6 +88,12 @@ SELECT
     t.amount AS transaction_amount,
     t.country AS transaction_country,
     t.merchant_category,
-    l.is_fraud
+    l.is_fraud,
+    l.label_timestamp,
+    l.label_source,
+    l.label_confidence,
+    l.annotator_id,
+    l.reason_code
 FROM fraud_transactions t
-JOIN fraud_labels l ON l.transaction_id = t.transaction_id;
+JOIN fraud_labels l ON l.transaction_id = t.transaction_id
+WHERE l.label_timestamp >= t.event_timestamp;
