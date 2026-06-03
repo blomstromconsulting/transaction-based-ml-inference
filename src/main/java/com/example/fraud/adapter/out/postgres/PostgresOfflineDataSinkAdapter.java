@@ -10,13 +10,12 @@ import com.example.fraud.domain.port.out.OfflineDataSinkPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
-import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
+import javax.sql.DataSource;
 import java.math.BigDecimal;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -26,152 +25,16 @@ import java.util.List;
 @ApplicationScoped
 public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, FraudLabelRepositoryPort {
     private final ObjectMapper objectMapper;
+    private final DataSource dataSource;
     private final boolean enabled;
-    private final boolean schemaInitEnabled;
-    private final String jdbcUrl;
-    private final String user;
-    private final String password;
 
     public PostgresOfflineDataSinkAdapter(
             ObjectMapper objectMapper,
-            @ConfigProperty(name = "fraud.offline-store.enabled", defaultValue = "false") boolean enabled,
-            @ConfigProperty(name = "fraud.offline-store.schema-init", defaultValue = "true") boolean schemaInitEnabled,
-            @ConfigProperty(name = "fraud.offline-store.jdbc-url") String jdbcUrl,
-            @ConfigProperty(name = "fraud.offline-store.user") String user,
-            @ConfigProperty(name = "fraud.offline-store.password") String password) {
+            DataSource dataSource,
+            @ConfigProperty(name = "fraud.offline-store.enabled", defaultValue = "false") boolean enabled) {
         this.objectMapper = objectMapper;
+        this.dataSource = dataSource;
         this.enabled = enabled;
-        this.schemaInitEnabled = schemaInitEnabled;
-        this.jdbcUrl = jdbcUrl;
-        this.user = user;
-        this.password = password;
-    }
-
-    @PostConstruct
-    void initializeSchema() {
-        if (!enabled || !schemaInitEnabled) {
-            return;
-        }
-        execute("""
-                CREATE TABLE IF NOT EXISTS fraud_transactions (
-                    transaction_id TEXT PRIMARY KEY,
-                    customer_id TEXT NOT NULL,
-                    card_id TEXT NOT NULL,
-                    merchant_id TEXT NOT NULL,
-                    merchant_category TEXT NOT NULL,
-                    amount DOUBLE PRECISION NOT NULL,
-                    currency TEXT NOT NULL,
-                    country TEXT NOT NULL,
-                    event_timestamp TIMESTAMPTZ NOT NULL,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS fraud_labels (
-                    transaction_id TEXT PRIMARY KEY REFERENCES fraud_transactions(transaction_id),
-                    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
-                    label_timestamp TIMESTAMPTZ NOT NULL,
-                    label_source TEXT NOT NULL,
-                    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-                    annotator_id TEXT,
-                    reason_code TEXT,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """);
-        execute("""
-                ALTER TABLE fraud_labels
-                ADD COLUMN IF NOT EXISTS annotator_id TEXT
-                """);
-        execute("""
-                ALTER TABLE fraud_labels
-                ADD COLUMN IF NOT EXISTS reason_code TEXT
-                """);
-        execute("""
-                ALTER TABLE fraud_labels
-                ADD COLUMN IF NOT EXISTS updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS fraud_label_events (
-                    id BIGSERIAL PRIMARY KEY,
-                    transaction_id TEXT NOT NULL REFERENCES fraud_transactions(transaction_id),
-                    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
-                    label_timestamp TIMESTAMPTZ NOT NULL,
-                    label_source TEXT NOT NULL,
-                    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-                    annotator_id TEXT,
-                    reason_code TEXT,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS customer_transaction_stats (
-                    customer_id TEXT NOT NULL,
-                    event_timestamp TIMESTAMPTZ NOT NULL,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    customer_transaction_count_1h BIGINT NOT NULL,
-                    customer_transaction_count_24h BIGINT NOT NULL,
-                    customer_total_amount_24h DOUBLE PRECISION NOT NULL,
-                    customer_avg_amount_7d DOUBLE PRECISION NOT NULL,
-                    customer_max_amount_7d DOUBLE PRECISION NOT NULL,
-                    customer_distinct_merchants_24h BIGINT NOT NULL,
-                    customer_cross_border_count_7d BIGINT NOT NULL,
-                    PRIMARY KEY (customer_id, event_timestamp)
-                )
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS merchant_risk_features (
-                    merchant_id TEXT NOT NULL,
-                    event_timestamp TIMESTAMPTZ NOT NULL,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    merchant_risk_score REAL NOT NULL,
-                    merchant_category TEXT NOT NULL,
-                    PRIMARY KEY (merchant_id, event_timestamp)
-                )
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS fraud_prediction_logs (
-                    transaction_id TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    model_version TEXT NOT NULL,
-                    fraud_score DOUBLE PRECISION NOT NULL,
-                    decision TEXT NOT NULL,
-                    features_used JSONB NOT NULL,
-                    inference_timestamp TIMESTAMPTZ NOT NULL,
-                    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    PRIMARY KEY (transaction_id, model, model_version)
-                )
-                """);
-        execute("""
-                CREATE TABLE IF NOT EXISTS fraud_transaction_processing (
-                    transaction_id TEXT PRIMARY KEY,
-                    model TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    error_message TEXT,
-                    started_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """);
-        execute("""
-                CREATE OR REPLACE VIEW fraud_training_examples AS
-                SELECT
-                    t.transaction_id,
-                    t.customer_id,
-                    t.merchant_id,
-                    t.event_timestamp,
-                    t.amount AS transaction_amount,
-                    t.country AS transaction_country,
-                    t.merchant_category,
-                    l.is_fraud,
-                    l.label_timestamp,
-                    l.label_source,
-                    l.label_confidence,
-                    l.annotator_id,
-                    l.reason_code
-                FROM fraud_transactions t
-                JOIN fraud_labels l ON l.transaction_id = t.transaction_id
-                WHERE l.label_timestamp >= t.event_timestamp
-                """);
     }
 
     @Override
@@ -412,7 +275,7 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, Frau
     }
 
     private int executeUpdate(String sql, SqlBinder binder) {
-        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
+        try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             binder.bind(statement);
             return statement.executeUpdate();
@@ -423,7 +286,7 @@ public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort, Frau
     }
 
     private boolean executeExists(String sql, SqlBinder binder) {
-        try (Connection connection = DriverManager.getConnection(jdbcUrl, user, password);
+        try (Connection connection = dataSource.getConnection();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             binder.bind(statement);
             try (java.sql.ResultSet resultSet = statement.executeQuery()) {

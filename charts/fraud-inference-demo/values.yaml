@@ -46,6 +46,8 @@ postgres:
   database: fraud_features
   user: feast
   password: feast
+  existingSecret: ""
+  passwordSecretKey: password
   schema: public
   sslmode: disable
   persistence:

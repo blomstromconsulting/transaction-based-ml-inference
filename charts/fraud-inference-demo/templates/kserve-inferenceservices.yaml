@@ -1,4 +1,5 @@
 {{- if .Values.kserve.enabled -}}
+{{- $postgresSecretName := default (printf "%s-credentials" (include "fraud-inference-demo.postgresName" .)) .Values.postgres.existingSecret -}}
 {{- range $modelName, $model := .Values.models }}
 ---
 apiVersion: {{ $.Values.kserve.apiVersion }}
@@ -89,7 +90,14 @@ spec:
           - name: FEAST_POSTGRES_USER
             value: {{ $.Values.postgres.user | quote }}
           - name: FEAST_POSTGRES_PASSWORD
+            {{- if or $.Values.postgres.enabled $.Values.postgres.existingSecret }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ $postgresSecretName }}
+                key: {{ $.Values.postgres.passwordSecretKey }}
+            {{- else }}
             value: {{ $.Values.postgres.password | quote }}
+            {{- end }}
           - name: FEAST_POSTGRES_SSLMODE
             value: {{ $.Values.postgres.sslmode | quote }}
           {{- with $.Values.kserve.transformer.env }}

@@ -1,12 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-from db import connect, repo_root
+from db import connect
 
 
 def main() -> None:
-    root = repo_root()
-    schema = (root / "training/sql/schema.sql").read_text()
     now = datetime(2026, 5, 29, 12, 0, tzinfo=timezone.utc)
 
     transactions = [
@@ -22,7 +18,6 @@ def main() -> None:
 
     with connect() as conn:
         with conn.cursor() as cur:
-            cur.execute(schema)
             for row in transactions:
                 tx = row[:-1]
                 label = row[-1]
@@ -47,6 +42,30 @@ def main() -> None:
                         label_source = EXCLUDED.label_source
                     """,
                     (row[0], label, row[8] + timedelta(days=2), "sample"),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO fraud_label_events (
+                        transaction_id, is_fraud, label_timestamp, label_source
+                    )
+                    SELECT %s, %s, %s, %s
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM fraud_label_events
+                        WHERE transaction_id = %s
+                          AND label_timestamp = %s
+                          AND label_source = %s
+                    )
+                    """,
+                    (
+                        row[0],
+                        label,
+                        row[8] + timedelta(days=2),
+                        "sample",
+                        row[0],
+                        row[8] + timedelta(days=2),
+                        "sample",
+                    ),
                 )
                 write_customer_features(cur, row)
                 write_merchant_features(cur, row)

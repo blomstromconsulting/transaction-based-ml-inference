@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS fraud_transactions (
+CREATE TABLE fraud_transactions (
     transaction_id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
     card_id TEXT NOT NULL,
@@ -11,31 +11,10 @@ CREATE TABLE IF NOT EXISTS fraud_transactions (
     created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS fraud_labels (
-    transaction_id TEXT PRIMARY KEY REFERENCES fraud_transactions(transaction_id),
-    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
-    label_timestamp TIMESTAMPTZ NOT NULL,
-    label_source TEXT NOT NULL,
-    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-    annotator_id TEXT,
-    reason_code TEXT,
-    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+CREATE INDEX idx_fraud_transactions_event_timestamp
+    ON fraud_transactions (event_timestamp);
 
-CREATE TABLE IF NOT EXISTS fraud_label_events (
-    id BIGSERIAL PRIMARY KEY,
-    transaction_id TEXT NOT NULL REFERENCES fraud_transactions(transaction_id),
-    is_fraud INTEGER NOT NULL CHECK (is_fraud IN (0, 1)),
-    label_timestamp TIMESTAMPTZ NOT NULL,
-    label_source TEXT NOT NULL,
-    label_confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-    annotator_id TEXT,
-    reason_code TEXT,
-    created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS customer_transaction_stats (
+CREATE TABLE customer_transaction_stats (
     customer_id TEXT NOT NULL,
     event_timestamp TIMESTAMPTZ NOT NULL,
     created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -49,7 +28,7 @@ CREATE TABLE IF NOT EXISTS customer_transaction_stats (
     PRIMARY KEY (customer_id, event_timestamp)
 );
 
-CREATE TABLE IF NOT EXISTS merchant_risk_features (
+CREATE TABLE merchant_risk_features (
     merchant_id TEXT NOT NULL,
     event_timestamp TIMESTAMPTZ NOT NULL,
     created_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -58,7 +37,7 @@ CREATE TABLE IF NOT EXISTS merchant_risk_features (
     PRIMARY KEY (merchant_id, event_timestamp)
 );
 
-CREATE TABLE IF NOT EXISTS fraud_prediction_logs (
+CREATE TABLE fraud_prediction_logs (
     transaction_id TEXT NOT NULL,
     model TEXT NOT NULL,
     model_version TEXT NOT NULL,
@@ -70,7 +49,10 @@ CREATE TABLE IF NOT EXISTS fraud_prediction_logs (
     PRIMARY KEY (transaction_id, model, model_version)
 );
 
-CREATE TABLE IF NOT EXISTS fraud_transaction_processing (
+CREATE INDEX idx_fraud_prediction_logs_inference_timestamp
+    ON fraud_prediction_logs (inference_timestamp);
+
+CREATE TABLE fraud_transaction_processing (
     transaction_id TEXT PRIMARY KEY,
     model TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -79,21 +61,5 @@ CREATE TABLE IF NOT EXISTS fraud_transaction_processing (
     updated_timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE OR REPLACE VIEW fraud_training_examples AS
-SELECT
-    t.transaction_id,
-    t.customer_id,
-    t.merchant_id,
-    t.event_timestamp,
-    t.amount AS transaction_amount,
-    t.country AS transaction_country,
-    t.merchant_category,
-    l.is_fraud,
-    l.label_timestamp,
-    l.label_source,
-    l.label_confidence,
-    l.annotator_id,
-    l.reason_code
-FROM fraud_transactions t
-JOIN fraud_labels l ON l.transaction_id = t.transaction_id
-WHERE l.label_timestamp >= t.event_timestamp;
+CREATE INDEX idx_fraud_transaction_processing_status
+    ON fraud_transaction_processing (status);

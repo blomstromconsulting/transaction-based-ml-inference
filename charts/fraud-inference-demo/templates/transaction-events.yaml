@@ -1,4 +1,5 @@
 {{- if .Values.transactionEvents.enabled -}}
+{{- $postgresSecretName := default (printf "%s-credentials" (include "fraud-inference-demo.postgresName" .)) .Values.postgres.existingSecret -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,6 +28,29 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+            - |
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE"; do
+                echo "waiting for postgres at ${POSTGRES_HOST}:${POSTGRES_PORT}"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+      {{- end }}
       containers:
         - name: transaction-events
           image: "{{ .Values.transactionEvents.image.repository }}:{{ .Values.transactionEvents.image.tag }}"
@@ -52,7 +76,33 @@ spec:
             - name: FRAUD_OFFLINE_STORE_USER
               value: {{ .Values.postgres.user | quote }}
             - name: FRAUD_OFFLINE_STORE_PASSWORD
+              {{- if or .Values.postgres.enabled .Values.postgres.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+              {{- else }}
               value: {{ .Values.postgres.password | quote }}
+              {{- end }}
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: {{ printf "jdbc:postgresql://%s:%v/%s" (include "fraud-inference-demo.postgresName" .) .Values.postgres.service.port .Values.postgres.database | quote }}
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: {{ .Values.postgres.user | quote }}
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              {{- if or .Values.postgres.enabled .Values.postgres.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+              {{- else }}
+              value: {{ .Values.postgres.password | quote }}
+              {{- end }}
+            - name: QUARKUS_FLYWAY_MIGRATE_AT_START
+              value: {{ .Values.postgres.enabled | quote }}
+            - name: QUARKUS_FLYWAY_BASELINE_ON_MIGRATE
+              value: "true"
+            - name: QUARKUS_FLYWAY_CLEAN_DISABLED
+              value: "true"
 {{- range $modelName, $model := .Values.models }}
             - name: FRAUD_MODEL_{{ $modelName }}_KSERVE_URL
               valueFrom:

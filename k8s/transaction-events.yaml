@@ -32,7 +32,25 @@ spec:
             - name: FRAUD_OFFLINE_STORE_USER
               value: feast
             - name: FRAUD_OFFLINE_STORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fraud-postgres-credentials
+                  key: password
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:postgresql://fraud-postgres:5432/fraud_features
+            - name: QUARKUS_DATASOURCE_USERNAME
               value: feast
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fraud-postgres-credentials
+                  key: password
+            - name: QUARKUS_FLYWAY_MIGRATE_AT_START
+              value: "true"
+            - name: QUARKUS_FLYWAY_BASELINE_ON_MIGRATE
+              value: "true"
+            - name: QUARKUS_FLYWAY_CLEAN_DISABLED
+              value: "true"
             - name: FRAUD_MODEL_MODEL_A_KSERVE_URL
               valueFrom:
                 configMapKeyRef:

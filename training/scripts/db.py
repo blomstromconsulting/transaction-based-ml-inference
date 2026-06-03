@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 import psycopg
 
@@ -13,8 +12,3 @@ def database_url() -> str:
 
 def connect():
     return psycopg.connect(database_url())
-
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-

@@ -106,6 +106,8 @@ feast:
 
 Redis remains the Feast online store used by the transformer. Postgres is the Feast offline store used by retraining jobs for historical feature retrieval. When Postgres is enabled, the Quarkus service writes live transaction facts, historical feature rows, and prediction logs through its offline data sink. Feast reads those Postgres tables as offline data sources; labels still need to be supplied later from fraud outcomes.
 
+When `postgres.enabled=true`, the chart configures the Quarkus datasource and sets `QUARKUS_FLYWAY_MIGRATE_AT_START=true`. Schema migrations run from the application image's `db/migration` resources before the transaction service starts accepting traffic. The Postgres password is projected from a Kubernetes Secret; set `postgres.existingSecret` and `postgres.passwordSecretKey` to use a pre-created Secret.
+
 For production-like use, replace `models.MODEL_A.predictorImage`, `models.MODEL_B.predictorImage`, `predictorCommand`, and `predictorArgs` with real model-serving images.
 
 ## Feast Online Store Note

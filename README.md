@@ -581,9 +581,11 @@ When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` servic
 
 The application does not create fraud labels. Labels are delayed outcomes and must be loaded into `fraud_labels` from review, chargeback, or dispute systems before a transaction can be used as a supervised training example.
 
+Flyway owns the Postgres schema. Quarkus runs migrations from [src/main/resources/db/migration](./src/main/resources/db/migration) at startup when `fraud.offline-store.enabled=true`. The Postgres adapter only reads and writes application data; it does not create or alter tables.
+
 Feast is responsible for defining the feature views, querying those Postgres tables for point-in-time correct training datasets, and materializing features to the online store when needed. In this Postgres demo path, Feast is not responsible for inserting the offline rows.
 
-The training schema in [training/sql/schema.sql](./training/sql/schema.sql) defines:
+The Flyway migrations define:
 
 - `fraud_transactions`: historical transaction facts.
 - `fraud_labels`: confirmed fraud or legitimate outcomes.
@@ -613,7 +615,7 @@ curl -X PUT http://localhost:8080/transactions/tx-10001/label \
 
 The service upserts the current label in `fraud_labels` and appends every annotation to `fraud_label_events`. Unknown transaction ids return `404`.
 
-For a standalone local retraining demo, load sample labeled data into Postgres:
+For a standalone local retraining demo, start Postgres and run the application once with the offline store enabled so Flyway applies migrations:
 
 ```bash
 docker run --rm --name fraud-postgres \
@@ -626,7 +628,23 @@ docker run --rm --name fraud-postgres \
 python -m venv .venv-training
 source .venv-training/bin/activate
 pip install -r training/requirements.txt
+```
 
+In another terminal, run Quarkus with the offline store enabled:
+
+```bash
+FRAUD_OFFLINE_STORE_ENABLED=true \
+FRAUD_OFFLINE_STORE_JDBC_URL=jdbc:postgresql://localhost:5432/fraud_features \
+FRAUD_OFFLINE_STORE_USER=feast \
+FRAUD_OFFLINE_STORE_PASSWORD=feast \
+FRAUD_MODEL_MODEL_A_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-a:predict \
+FRAUD_MODEL_MODEL_B_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-b:predict \
+mvn quarkus:dev
+```
+
+Then load sample labeled data:
+
+```bash
 TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
 python training/scripts/load_sample_data.py
 ```

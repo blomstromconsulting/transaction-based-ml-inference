@@ -1,4 +1,5 @@
 {{- if .Values.feast.enabled -}}
+{{- $postgresSecretName := default (printf "%s-credentials" (include "fraud-inference-demo.postgresName" .)) .Values.postgres.existingSecret -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,6 +20,40 @@ spec:
         app.kubernetes.io/component: feast-feature-server
     spec:
       serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      {{- if and .Values.postgres.enabled (eq .Values.feast.offlineStore.type "postgres") }}
+      initContainers:
+        - name: wait-for-flyway-schema
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+            - |
+              until psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -tAc "select to_regclass('${POSTGRES_SCHEMA}.customer_transaction_stats') is not null and to_regclass('${POSTGRES_SCHEMA}.merchant_risk_features') is not null" | grep -q t; do
+                echo "waiting for Flyway-created feature tables"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_SCHEMA
+              value: {{ .Values.postgres.schema | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PGPASSWORD
+              {{- if or .Values.postgres.enabled .Values.postgres.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+              {{- else }}
+              value: {{ .Values.postgres.password | quote }}
+              {{- end }}
+      {{- end }}
       containers:
         - name: feast
           image: "{{ .Values.feast.image.repository }}:{{ .Values.feast.image.tag }}"
@@ -49,7 +84,14 @@ spec:
             - name: FEAST_POSTGRES_USER
               value: {{ .Values.postgres.user | quote }}
             - name: FEAST_POSTGRES_PASSWORD
+              {{- if or .Values.postgres.enabled .Values.postgres.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+              {{- else }}
               value: {{ .Values.postgres.password | quote }}
+              {{- end }}
             - name: FEAST_POSTGRES_SSLMODE
               value: {{ .Values.postgres.sslmode | quote }}
           {{- with .Values.feast.resources }}

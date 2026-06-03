@@ -4,7 +4,7 @@ This directory shows the production-like retraining path for the fraud inference
 
 The online path still uses Redis for low-latency inference. The offline path uses Postgres as the Feast offline store so training jobs can build point-in-time correct datasets from historical transactions, labels, and feature values.
 
-When `fraud.offline-store.enabled=true`, the Quarkus application writes live transactions, historical feature rows, and prediction logs to Postgres through its offline data sink. Feast reads those Postgres tables as offline data sources for historical retrieval; Feast is not the writer for this Postgres path. The sample loader in this directory is still useful for local demos because it inserts labels; production labels usually arrive later from review, chargeback, dispute, or case-management systems.
+When `fraud.offline-store.enabled=true`, Quarkus runs Flyway migrations from `src/main/resources/db/migration` and writes live transactions, historical feature rows, and prediction logs to Postgres through its offline data sink. Feast reads those Postgres tables as offline data sources for historical retrieval; Feast is not the writer for this Postgres path. The sample loader in this directory is still useful for local demos because it inserts data and labels after Flyway has created the schema; production labels usually arrive later from review, chargeback, dispute, or case-management systems.
 
 ## Data Needed
 
@@ -41,7 +41,19 @@ source .venv-training/bin/activate
 pip install -r training/requirements.txt
 ```
 
-Load schema and sample labeled data:
+Apply Flyway migrations by starting the Quarkus app with the offline store enabled:
+
+```bash
+FRAUD_OFFLINE_STORE_ENABLED=true \
+FRAUD_OFFLINE_STORE_JDBC_URL=jdbc:postgresql://localhost:5432/fraud_features \
+FRAUD_OFFLINE_STORE_USER=feast \
+FRAUD_OFFLINE_STORE_PASSWORD=feast \
+FRAUD_MODEL_MODEL_A_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-a:predict \
+FRAUD_MODEL_MODEL_B_KSERVE_URL=http://localhost:18081/v1/models/fraud-model-b:predict \
+mvn quarkus:dev
+```
+
+Load sample labeled data:
 
 ```bash
 TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
