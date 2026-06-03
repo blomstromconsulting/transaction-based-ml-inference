@@ -7,17 +7,17 @@ This repository contains a Kubernetes-deployable Quarkus demo for credit card fr
 The deployed demo has two data paths:
 
 - **Online inference path**: update rolling features, materialize them to Feast's Redis online store, enrich the KServe request, and score the transaction.
-- **Offline training path**: persist normalized transactions, historical feature rows, and model decisions to Postgres so labels can be joined later for retraining.
+- **Offline training path**: persist normalized transactions, historical feature rows, and model decisions through a Postgres offline data sink so labels can be joined later for Feast historical retrieval and retraining.
 
 ```text
 Transaction Event
   -> transaction-events Quarkus service
   -> validate and normalize
   -> compute Redis sorted-set rolling aggregates
-  -> write normalized transaction facts to Postgres offline store
+  -> write normalized transaction facts to Postgres offline data sink
   -> materialize aggregate feature rows through Feast feature writer
   -> Feast writes online features to Redis using its online store format
-  -> write historical customer and merchant feature rows to Postgres offline store
+  -> write historical customer and merchant feature rows to Postgres offline data sink
   -> trigger KServe InferenceService
   -> KServe Transformer
   -> Feast Feature Service lookup
@@ -26,7 +26,7 @@ Transaction Event
   -> KServe Predictor: Model A or Model B
   -> fraud score and decision metadata
   -> fraud decision event is logged/published
-  -> write prediction audit row to Postgres offline store
+  -> write prediction audit row to Postgres offline data sink
 ```
 
 ## Data Flow Diagram
@@ -36,14 +36,14 @@ flowchart LR
     event["Incoming transaction event"] --> rest["transaction-events service<br/>REST or messaging adapter"]
     rest --> app["Application use cases<br/>validate, normalize, orchestrate"]
 
-    app --> offlineTx[("Postgres offline store<br/>fraud_transactions")]
+    app --> offlineTx[("Postgres offline data sink<br/>fraud_transactions")]
     offlineTx -. "later joined with labels" .-> labels[("fraud_labels<br/>chargebacks, disputes, review")]
 
     app --> redisAdapter["Redis rolling-window stats adapter"]
     redisAdapter --> debugRedis[("Redis debug stats<br/>sorted sets + readable hashes")]
     app --> writer["Feast feature writer<br/>materialize feature rows"]
     writer --> feastOnline[("Redis Feast online store<br/>Feast internal format")]
-    app --> offlineFeatures[("Postgres offline store<br/>customer_transaction_stats<br/>merchant_risk_features")]
+    app --> offlineFeatures[("Postgres offline data sink<br/>customer_transaction_stats<br/>merchant_risk_features")]
     app --> kserveAdapter["KServe inference adapter"]
 
     kserveAdapter --> isvc["KServe InferenceService<br/>Model A or Model B"]
@@ -60,7 +60,7 @@ flowchart LR
     modelB --> result
     result --> decision["Fraud decision event<br/>APPROVE, REVIEW, or DECLINE"]
     decision --> publisher["Decision publisher/log"]
-    publisher --> offlinePredictions[("Postgres offline store<br/>fraud_prediction_logs")]
+    publisher --> offlinePredictions[("Postgres offline data sink<br/>fraud_prediction_logs")]
 
     labels --> training["Feast historical retrieval<br/>point-in-time training set"]
     offlineFeatures --> training
@@ -76,7 +76,7 @@ sequenceDiagram
     autonumber
     participant Client as Client
     participant TxSvc as transaction-events<br/>Quarkus service
-    participant Offline as Postgres<br/>offline store
+    participant Offline as Postgres<br/>offline data sink
     participant RedisDebug as Redis<br/>debug aggregates
     participant Writer as Feast feature writer
     participant FeastRedis as Redis<br/>Feast online store
@@ -157,7 +157,7 @@ The online path and offline path intentionally store different shapes:
 
 - Redis debug keys are application-readable rolling-window state for the demo aggregator.
 - Redis Feast online-store keys are owned by Feast and are read by the KServe transformer through Feast APIs.
-- Postgres stores historical facts, feature rows, labels, and prediction logs for retraining and audit.
+- Postgres stores historical facts, feature rows, labels, and prediction logs for retraining and audit. Quarkus writes these rows directly through `OfflineDataSinkPort`; Feast reads the feature tables as configured offline data sources.
 
 The application service does not hard-code every model feature. It triggers the requested model and passes the configured Feast Feature Service name. Model-specific feature sets live in Feast:
 
@@ -431,7 +431,7 @@ feast:
     type: postgres
 ```
 
-Postgres stores historical transactions, historical feature values, and prediction logs written by the Quarkus application. Fraud labels still arrive later from chargebacks, disputes, manual review, or another outcome system. Redis remains the online store used by low-latency inference.
+Postgres stores historical transactions, historical feature values, and prediction logs written by the Quarkus offline data sink. Feast treats those Postgres tables as offline data sources for historical retrieval; it is not the writer for this Postgres path. Fraud labels still arrive later from chargebacks, disputes, manual review, or another outcome system. Redis remains the online store used by low-latency inference.
 
 After deployment, port-forward the Quarkus service:
 
@@ -509,7 +509,7 @@ charts/fraud-inference-demo
 
 The online inference path needs Redis, but retraining needs an offline store with historical facts and labels. This demo uses Postgres as the Feast offline store for that path.
 
-When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` service writes live inference traffic into Postgres:
+When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` service writes live inference traffic into Postgres through `OfflineDataSinkPort` and `PostgresOfflineDataSinkAdapter`:
 
 - normalized transaction facts into `fraud_transactions`
 - customer aggregate feature rows into `customer_transaction_stats`
@@ -517,6 +517,8 @@ When `fraud.offline-store.enabled=true`, the Quarkus `transaction-events` servic
 - model scores, decisions, and feature names into `fraud_prediction_logs`
 
 The application does not create fraud labels. Labels are delayed outcomes and must be loaded into `fraud_labels` from review, chargeback, or dispute systems before a transaction can be used as a supervised training example.
+
+Feast is responsible for defining the feature views, querying those Postgres tables for point-in-time correct training datasets, and materializing features to the online store when needed. In this Postgres demo path, Feast is not responsible for inserting the offline rows.
 
 The training schema in [training/sql/schema.sql](./training/sql/schema.sql) defines:
 

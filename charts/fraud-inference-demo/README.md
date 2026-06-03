@@ -85,7 +85,7 @@ feast:
     type: postgres
 ```
 
-Redis remains the Feast online store used by the transformer. Postgres is the Feast offline store used by retraining jobs for historical feature retrieval. When Postgres is enabled, the Quarkus service also writes live transaction facts, historical feature rows, and prediction logs to Postgres. Labels still need to be supplied later from fraud outcomes.
+Redis remains the Feast online store used by the transformer. Postgres is the Feast offline store used by retraining jobs for historical feature retrieval. When Postgres is enabled, the Quarkus service writes live transaction facts, historical feature rows, and prediction logs through its offline data sink. Feast reads those Postgres tables as offline data sources; labels still need to be supplied later from fraud outcomes.
 
 For production-like use, replace `models.MODEL_A.predictorImage`, `models.MODEL_B.predictorImage`, `predictorCommand`, and `predictorArgs` with real model-serving images.
 

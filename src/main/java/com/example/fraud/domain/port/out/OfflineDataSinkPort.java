@@ -5,7 +5,7 @@ import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.MerchantFeatureRow;
 import com.example.fraud.domain.model.TransactionEvent;
 
-public interface OfflineTrainingDataPort {
+public interface OfflineDataSinkPort {
     void recordTransaction(TransactionEvent event);
 
     void recordCustomerFeatures(CustomerFeatureRow row);

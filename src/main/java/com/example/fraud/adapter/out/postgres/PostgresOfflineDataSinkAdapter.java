@@ -4,7 +4,7 @@ import com.example.fraud.domain.model.CustomerFeatureRow;
 import com.example.fraud.domain.model.FraudDecision;
 import com.example.fraud.domain.model.MerchantFeatureRow;
 import com.example.fraud.domain.model.TransactionEvent;
-import com.example.fraud.domain.port.out.OfflineTrainingDataPort;
+import com.example.fraud.domain.port.out.OfflineDataSinkPort;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.logging.Log;
@@ -22,7 +22,7 @@ import java.time.Instant;
 import java.util.List;
 
 @ApplicationScoped
-public class PostgresOfflineTrainingDataAdapter implements OfflineTrainingDataPort {
+public class PostgresOfflineDataSinkAdapter implements OfflineDataSinkPort {
     private final ObjectMapper objectMapper;
     private final boolean enabled;
     private final boolean schemaInitEnabled;
@@ -30,7 +30,7 @@ public class PostgresOfflineTrainingDataAdapter implements OfflineTrainingDataPo
     private final String user;
     private final String password;
 
-    public PostgresOfflineTrainingDataAdapter(
+    public PostgresOfflineDataSinkAdapter(
             ObjectMapper objectMapper,
             @ConfigProperty(name = "fraud.offline-store.enabled", defaultValue = "false") boolean enabled,
             @ConfigProperty(name = "fraud.offline-store.schema-init", defaultValue = "true") boolean schemaInitEnabled,
@@ -254,8 +254,8 @@ public class PostgresOfflineTrainingDataAdapter implements OfflineTrainingDataPo
             binder.bind(statement);
             statement.executeUpdate();
         } catch (SQLException e) {
-            Log.warnf(e, "Failed to write fraud offline training data");
-            throw new IllegalStateException("Failed to write fraud offline training data", e);
+            Log.warnf(e, "Failed to write fraud offline data sink");
+            throw new IllegalStateException("Failed to write fraud offline data sink", e);
         }
     }
 

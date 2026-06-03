@@ -4,7 +4,7 @@ This directory shows the production-like retraining path for the fraud inference
 
 The online path still uses Redis for low-latency inference. The offline path uses Postgres as the Feast offline store so training jobs can build point-in-time correct datasets from historical transactions, labels, and feature values.
 
-When `fraud.offline-store.enabled=true`, the Quarkus application writes live transactions, historical feature rows, and prediction logs to Postgres. The sample loader in this directory is still useful for local demos because it inserts labels; production labels usually arrive later from review, chargeback, dispute, or case-management systems.
+When `fraud.offline-store.enabled=true`, the Quarkus application writes live transactions, historical feature rows, and prediction logs to Postgres through its offline data sink. Feast reads those Postgres tables as offline data sources for historical retrieval; Feast is not the writer for this Postgres path. The sample loader in this directory is still useful for local demos because it inserts labels; production labels usually arrive later from review, chargeback, dispute, or case-management systems.
 
 ## Data Needed
 

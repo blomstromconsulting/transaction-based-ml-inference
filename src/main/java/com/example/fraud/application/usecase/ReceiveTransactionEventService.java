@@ -12,7 +12,7 @@ import com.example.fraud.domain.port.in.TriggerFraudInferenceUseCase;
 import com.example.fraud.domain.port.in.UpdateCustomerTransactionStatsUseCase;
 import com.example.fraud.domain.port.out.FraudDecisionPublisherPort;
 import com.example.fraud.domain.port.out.FeatureMaterializationPort;
-import com.example.fraud.domain.port.out.OfflineTrainingDataPort;
+import com.example.fraud.domain.port.out.OfflineDataSinkPort;
 import com.example.fraud.domain.service.TransactionNormalizer;
 import jakarta.enterprise.context.ApplicationScoped;
 
@@ -23,19 +23,19 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
     private final TransactionNormalizer normalizer = new TransactionNormalizer();
     private final UpdateCustomerTransactionStatsUseCase updateStatsUseCase;
     private final FeatureMaterializationPort featureMaterializationPort;
-    private final OfflineTrainingDataPort offlineTrainingDataPort;
+    private final OfflineDataSinkPort offlineDataSinkPort;
     private final TriggerFraudInferenceUseCase triggerFraudInferenceUseCase;
     private final FraudDecisionPublisherPort decisionPublisherPort;
 
     public ReceiveTransactionEventService(
             UpdateCustomerTransactionStatsUseCase updateStatsUseCase,
             FeatureMaterializationPort featureMaterializationPort,
-            OfflineTrainingDataPort offlineTrainingDataPort,
+            OfflineDataSinkPort offlineDataSinkPort,
             TriggerFraudInferenceUseCase triggerFraudInferenceUseCase,
             FraudDecisionPublisherPort decisionPublisherPort) {
         this.updateStatsUseCase = updateStatsUseCase;
         this.featureMaterializationPort = featureMaterializationPort;
-        this.offlineTrainingDataPort = offlineTrainingDataPort;
+        this.offlineDataSinkPort = offlineDataSinkPort;
         this.triggerFraudInferenceUseCase = triggerFraudInferenceUseCase;
         this.decisionPublisherPort = decisionPublisherPort;
     }
@@ -43,7 +43,7 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
     @Override
     public FraudDecision receive(TransactionEvent event) {
         TransactionEvent normalized = normalizer.normalize(event);
-        offlineTrainingDataPort.recordTransaction(normalized);
+        offlineDataSinkPort.recordTransaction(normalized);
 
         CustomerTransactionStats stats = updateStatsUseCase.update(normalized);
         CustomerFeatureRow customerFeatureRow = CustomerFeatureRow.from(normalized, stats);
@@ -51,8 +51,8 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
 
         featureMaterializationPort.materializeCustomerFeatures(customerFeatureRow);
         featureMaterializationPort.materializeMerchantFeatures(merchantFeatureRow);
-        offlineTrainingDataPort.recordCustomerFeatures(customerFeatureRow);
-        offlineTrainingDataPort.recordMerchantFeatures(merchantFeatureRow);
+        offlineDataSinkPort.recordCustomerFeatures(customerFeatureRow);
+        offlineDataSinkPort.recordMerchantFeatures(merchantFeatureRow);
 
         FraudInferenceResult result = triggerFraudInferenceUseCase.trigger(new FraudInferenceRequest(normalized));
         FraudDecision decision = new FraudDecision(
@@ -63,7 +63,7 @@ public class ReceiveTransactionEventService implements ReceiveTransactionEventUs
                 result,
                 Instant.now());
         decisionPublisherPort.publish(decision);
-        offlineTrainingDataPort.recordPrediction(decision);
+        offlineDataSinkPort.recordPrediction(decision);
         return decision;
     }
 }
