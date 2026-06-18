@@ -2,6 +2,63 @@
 
 This repository contains a Kubernetes-deployable Quarkus demo for credit card fraud detection with transaction-driven feature updates, Feast online feature lookup backed by Redis, and KServe model inference with a transformer.
 
+## Reproduce the Full Training and Promotion Scenario
+
+The main demo scenario is intentionally scriptable: start from a clean Kubernetes namespace, generate transaction traffic, mark fraud outcomes, train a new model from Feast/Postgres offline data, register the model in MLflow, package the MLflow artifact into a predictor image, deploy it through KServe, send new transactions through the live flow, and evaluate the deployed model from prediction logs plus labels.
+
+Run the full scenario with one command:
+
+```bash
+scripts/run_e2e_mlflow_demo.sh
+```
+
+For local clusters where images must be loaded explicitly:
+
+```bash
+KIND_CLUSTER=kind scripts/run_e2e_mlflow_demo.sh
+
+MINIKUBE_PROFILE=minikube scripts/run_e2e_mlflow_demo.sh
+```
+
+The script deletes and recreates the `fraud-demo` namespace by default, so the run does not depend on historical data:
+
+```bash
+RESET=true scripts/run_e2e_mlflow_demo.sh
+```
+
+Set `RESET=false` only when you intentionally want to keep the namespace and reuse existing deployed infrastructure:
+
+```bash
+RESET=false scripts/run_e2e_mlflow_demo.sh
+```
+
+What the scenario does:
+
+1. Builds the Java transaction service, Java KServe transformer, Feast images, MLflow image, training image, and model-serving image.
+2. Deploys Postgres, Redis, RustFS, MLflow, Feast, the feature writer, and KServe resources through Helm.
+3. Sends training transactions through the public transaction API.
+4. Marks a labeled set as fraud or non-fraud through the label API.
+5. Runs an in-cluster training job that retrieves point-in-time features from Feast/Postgres and logs the run to MLflow.
+6. Stores model artifacts in the RustFS S3-compatible bucket used by MLflow.
+7. Simulates the CI promotion step with `scripts/simulate_model_ci.sh`, which builds a predictor image from the MLflow artifact and deploys it to KServe.
+8. Sends new scoring transactions through the same online path: transaction service, Redis feature state, Feast online store, KServe transformer, and trained predictor.
+9. Evaluates deployed-model performance by joining `fraud_prediction_logs` with `fraud_labels`.
+
+Successful runs end with:
+
+```text
+E2E_DEMO_SUCCEEDED run_id=<run_id> model_version=mlflow-<version>
+```
+
+Use the script as the default demo launcher. It is more repeatable than asking an agent to execute each step manually because it fixes the order, inputs, labels, waits, cleanup, and evaluation in source control. An agent is still useful for explaining failures, inspecting MLflow/Feast/Postgres afterward, or changing the scenario, but the scripted path should remain the reproducible acceptance test.
+
+After the scenario finishes, inspect the generated artifacts:
+
+- MLflow runs and registered model: `kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-mlflow 5000:5000`, then open [http://localhost:5000](http://localhost:5000).
+- RustFS model artifacts: `kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9001:9001`, then open [http://localhost:9001](http://localhost:9001).
+- Feast feature mappings: `scripts/start_feast_ui.sh`, then open [http://127.0.0.1:8888](http://127.0.0.1:8888).
+- Postgres training, label, and prediction tables: port-forward the chart-managed Postgres service as described in the Postgres inspection section.
+
 ## End-to-end Flow
 
 The deployed demo has two data paths:
