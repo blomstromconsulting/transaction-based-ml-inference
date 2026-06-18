@@ -4,7 +4,18 @@ This repository contains a Kubernetes-deployable Quarkus demo for credit card fr
 
 ## Reproduce the Full Training and Promotion Scenario
 
-The main demo scenario is intentionally scriptable: start from a clean Kubernetes namespace, generate transaction traffic, mark fraud outcomes, train a new model from Feast/Postgres offline data, register the model in MLflow, package the MLflow artifact into a predictor image, deploy it through KServe, send new transactions through the live flow, and evaluate the deployed model from prediction logs plus labels.
+The main demo scenario is intentionally scriptable. It shows how to:
+
+- Start from a clean Kubernetes namespace.
+- Generate transaction traffic.
+- Mark fraud and non-fraud outcomes.
+- Train a new model from Feast/Postgres offline data.
+- Register the model and metrics in MLflow.
+- Store model artifacts in RustFS through MLflow.
+- Package the MLflow artifact into a predictor image.
+- Deploy the trained model through KServe.
+- Send new transactions through the live inference flow.
+- Evaluate the deployed model from prediction logs plus labels.
 
 Run the full scenario with one command:
 
