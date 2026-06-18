@@ -142,6 +142,51 @@ scripts/run_e2e_mlflow_demo.sh
 
 The full demo deletes and recreates the namespace unless `RESET=false` is set.
 
+## Access MLflow and RustFS Artifacts
+
+With the default release name and namespace from the examples, port-forward MLflow:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-mlflow 5000:5000
+```
+
+Open [http://localhost:5000](http://localhost:5000). The MLflow UI exposes the training run history, parameters, metrics, logged artifacts, and model registry entries. For the full demo, inspect the latest run and the `fraud-MODEL_B` registered model. The logged artifacts include the training dataset fetched through Feast, validation rows with fraud scores, the confusion matrix, and the pyfunc model artifact that is later packaged into the KServe predictor image.
+
+The chart stores MLflow artifacts in the RustFS bucket configured by `mlflow.artifactRoot`, which defaults to `s3://mlflow-artifacts`. To inspect the bucket in the RustFS console:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9001:9001
+```
+
+Open [http://localhost:9001](http://localhost:9001). The default credentials are:
+
+```text
+username: mlflow
+password: mlflow-secret
+```
+
+If those values were overridden, read the generated secret:
+
+```bash
+kubectl get secret -n fraud-demo fraud-demo-fraud-inference-demo-rustfs-credentials \
+  -o jsonpath='{.data.accessKey}' | base64 --decode
+echo
+kubectl get secret -n fraud-demo fraud-demo-fraud-inference-demo-rustfs-credentials \
+  -o jsonpath='{.data.secretKey}' | base64 --decode
+echo
+```
+
+For CLI inspection, port-forward the RustFS S3 API and use the same credentials:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9000:9000
+
+AWS_ACCESS_KEY_ID=mlflow \
+AWS_SECRET_ACCESS_KEY=mlflow-secret \
+AWS_DEFAULT_REGION=us-east-1 \
+aws --endpoint-url http://localhost:9000 s3 ls s3://mlflow-artifacts --recursive
+```
+
 When `postgres.enabled=true`, the chart configures the Quarkus datasource and sets `QUARKUS_FLYWAY_MIGRATE_AT_START=true`. Schema migrations run from the application image's `db/migration` resources before the transaction service starts accepting traffic. The Postgres password is projected from a Kubernetes Secret; set `postgres.existingSecret` and `postgres.passwordSecretKey` to use a pre-created Secret.
 
 ## Connect to the Deployed Postgres Database

@@ -792,6 +792,57 @@ MINIKUBE_PROFILE=minikube scripts/run_e2e_mlflow_demo.sh
 
 The script builds the Java transaction service, Java KServe transformer, Feast images, MLflow image, training image, and the promoted model-serving image. It creates labeled transactions through the public API, trains from Feast/Postgres offline data, registers the model in MLflow, stores artifacts in RustFS, deploys the trained model as a KServe predictor image, runs more labeled transactions, and prints deployed-model metrics.
 
+### Inspect MLflow Runs and Artifacts
+
+After the full demo or an in-cluster training job has run, port-forward the MLflow service:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-mlflow 5000:5000
+```
+
+Open [http://localhost:5000](http://localhost:5000). The MLflow UI shows the training runs, parameters, metrics, artifacts, and registered model versions. For the default demo, inspect the `fraud-MODEL_B` registered model and the latest run under the default experiment. Each run logs the Feast historical training dataset, validation rows, confusion matrix, metrics, and the pyfunc model artifact used by the promotion script.
+
+The model artifacts are stored in the single-node RustFS bucket configured as the MLflow artifact root:
+
+```text
+s3://mlflow-artifacts
+```
+
+To inspect the bucket through the RustFS console:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9001:9001
+```
+
+Open [http://localhost:9001](http://localhost:9001). With the default chart values, sign in with:
+
+```text
+username: mlflow
+password: mlflow-secret
+```
+
+If the chart values were changed, read the active credentials from the RustFS secret:
+
+```bash
+kubectl get secret -n fraud-demo fraud-demo-fraud-inference-demo-rustfs-credentials \
+  -o jsonpath='{.data.accessKey}' | base64 --decode
+echo
+kubectl get secret -n fraud-demo fraud-demo-fraud-inference-demo-rustfs-credentials \
+  -o jsonpath='{.data.secretKey}' | base64 --decode
+echo
+```
+
+You can also inspect the artifacts with an S3-compatible CLI:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9000:9000
+
+AWS_ACCESS_KEY_ID=mlflow \
+AWS_SECRET_ACCESS_KEY=mlflow-secret \
+AWS_DEFAULT_REGION=us-east-1 \
+aws --endpoint-url http://localhost:9000 s3 ls s3://mlflow-artifacts --recursive
+```
+
 To run only the promotion step after a training job has registered a model:
 
 ```bash

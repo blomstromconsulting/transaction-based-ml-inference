@@ -146,6 +146,33 @@ The MLflow run logs:
 
 The Helm chart can run the same script as a Kubernetes `Job`. Model artifacts are stored in RustFS and model registry metadata is stored in the same Postgres instance as the fraud offline store.
 
+Inspect the generated runs by forwarding the MLflow tracking server:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-mlflow 5000:5000
+```
+
+Open [http://localhost:5000](http://localhost:5000), then inspect the latest run and the `fraud-MODEL_B` registered model. The run artifact browser shows the logged datasets, validation outputs, confusion matrix, and pyfunc model artifact.
+
+Inspect the artifact bucket directly through RustFS:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9001:9001
+```
+
+Open [http://localhost:9001](http://localhost:9001) and use the default credentials `mlflow` / `mlflow-secret`. The default artifact bucket is `mlflow-artifacts`.
+
+For S3-compatible CLI access:
+
+```bash
+kubectl port-forward -n fraud-demo svc/fraud-demo-fraud-inference-demo-rustfs 9000:9000
+
+AWS_ACCESS_KEY_ID=mlflow \
+AWS_SECRET_ACCESS_KEY=mlflow-secret \
+AWS_DEFAULT_REGION=us-east-1 \
+aws --endpoint-url http://localhost:9000 s3 ls s3://mlflow-artifacts --recursive
+```
+
 After a model is registered, package and deploy it with:
 
 ```bash
