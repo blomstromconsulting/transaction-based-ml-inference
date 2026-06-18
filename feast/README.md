@@ -17,6 +17,33 @@ feast apply
 feast serve --host 0.0.0.0 --port 6566
 ```
 
+## Start Feast UI
+
+From the repository root, start the Feast beta Web UI with:
+
+```bash
+scripts/start_feast_ui.sh
+```
+
+Open [http://127.0.0.1:8888](http://127.0.0.1:8888). The UI shows Feature Views, Feature Services, entities, data sources, and registry relationships. Inspect these Feature Services to see the feature mappings used by the demo models:
+
+- `fraud_model_a_feature_service`
+- `fraud_model_b_feature_service`
+
+The helper script creates or reuses a virtualenv at `/tmp/fraud-feast-ui-venv`, runs `feast apply`, and starts `feast ui`. The generated local registry is written to `feast/data/`, which is ignored by Git.
+
+To keep the UI running in the background:
+
+```bash
+DETACH=true scripts/start_feast_ui.sh
+```
+
+To use a different port:
+
+```bash
+PORT=8890 scripts/start_feast_ui.sh
+```
+
 Build a deployable Feast image from the repository root:
 
 ```bash

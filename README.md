@@ -209,6 +209,30 @@ Model B extends Model A with more customer and merchant features:
 
 The Feast repository under [feast](./feast) defines common reusable customer features and composes them into separate Feature Services for each model. Training scripts read [training/model_catalog.json](./training/model_catalog.json) so model feature references and training columns stay centralized for the offline path.
 
+### Feast UI
+
+Use the helper script to inspect Feast Feature Views, Feature Services, entities, data sources, and their relationships:
+
+```bash
+scripts/start_feast_ui.sh
+```
+
+Open [http://127.0.0.1:8888](http://127.0.0.1:8888), then inspect the `fraud_model_a_feature_service` and `fraud_model_b_feature_service` Feature Services. The script creates a local virtualenv outside the repository, runs `feast apply`, and starts the Feast beta Web UI against the local Feast registry.
+
+To run the UI in the background:
+
+```bash
+DETACH=true scripts/start_feast_ui.sh
+```
+
+Use `PORT` to avoid conflicts:
+
+```bash
+PORT=8890 scripts/start_feast_ui.sh
+```
+
+`feast apply` writes a local registry under `feast/data/`; that directory is ignored by Git because it is generated runtime state.
+
 ## Redis Online Feature State
 
 `RedisOnlineFeatureStateAdapter` implements `OnlineFeatureStatePort`. It stores functional online feature state, not debug-only data. The current implementation uses these key patterns:
