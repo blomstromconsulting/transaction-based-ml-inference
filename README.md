@@ -762,6 +762,54 @@ python training/scripts/evaluate.py \
 
 The classified dataset adds `fraud_score`, `expected_decision`, and `expected_is_fraud`. Compare those columns with `is_fraud` to measure precision, recall, PR-AUC, false positives, and false negatives before promoting a new model to KServe.
 
+## MLflow, RustFS, and Model Promotion Demo
+
+The Helm demo can also run the full retraining loop:
+
+```text
+transactions -> Postgres offline store + Feast feature rows
+labels -> fraud_labels
+training job -> Feast historical retrieval -> MLflow run
+MLflow artifacts -> RustFS S3-compatible bucket
+promotion script -> OCI predictor image -> KServe InferenceService
+new transactions -> Java transformer -> trained predictor -> prediction logs
+evaluation job -> fraud_prediction_logs joined with fraud_labels
+```
+
+The automated demo starts with a clean namespace by default, so historical data is not kept between runs:
+
+```bash
+scripts/run_e2e_mlflow_demo.sh
+```
+
+For kind or minikube, load local images into the cluster:
+
+```bash
+KIND_CLUSTER=kind scripts/run_e2e_mlflow_demo.sh
+
+MINIKUBE_PROFILE=minikube scripts/run_e2e_mlflow_demo.sh
+```
+
+The script builds the Java transaction service, Java KServe transformer, Feast images, MLflow image, training image, and the promoted model-serving image. It creates labeled transactions through the public API, trains from Feast/Postgres offline data, registers the model in MLflow, stores artifacts in RustFS, deploys the trained model as a KServe predictor image, runs more labeled transactions, and prints deployed-model metrics.
+
+To run only the promotion step after a training job has registered a model:
+
+```bash
+MODEL_VERSION=1 \
+scripts/simulate_model_ci.sh \
+  --model MODEL_B \
+  --registered-model-name fraud-MODEL_B \
+  --model-version 1 \
+  --image-repository fraud-model-b
+```
+
+To check whether retraining is needed due to feature drift:
+
+```bash
+TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
+python training/scripts/check_data_drift.py
+```
+
 ## Verification
 
 Run unit tests:

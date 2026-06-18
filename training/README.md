@@ -120,6 +120,58 @@ The classified output includes:
 
 Use those columns to compare a newly trained candidate against the confirmed `is_fraud` label and against the currently deployed model.
 
+## MLflow Training
+
+For the Kubernetes demo, train through MLflow instead of writing only a local `.joblib` file:
+
+```bash
+MLFLOW_TRACKING_URI=http://localhost:5000 \
+MLFLOW_S3_ENDPOINT_URL=http://localhost:9000 \
+AWS_ACCESS_KEY_ID=mlflow \
+AWS_SECRET_ACCESS_KEY=mlflow-secret \
+FEAST_OFFLINE_STORE_TYPE=postgres \
+python training/scripts/train_with_mlflow.py \
+  --model MODEL_B \
+  --registered-model-name fraud-MODEL_B
+```
+
+The MLflow run logs:
+
+- parameters for the model, threshold, feature service, and label maturity window
+- precision, recall, F1, PR-AUC, ROC-AUC when labels allow it
+- the Feast historical training dataset
+- validation rows with fraud scores
+- confusion matrix
+- a pyfunc model artifact that returns `fraud_score`
+
+The Helm chart can run the same script as a Kubernetes `Job`. Model artifacts are stored in RustFS and model registry metadata is stored in the same Postgres instance as the fraud offline store.
+
+After a model is registered, package and deploy it with:
+
+```bash
+scripts/simulate_model_ci.sh \
+  --model MODEL_B \
+  --registered-model-name fraud-MODEL_B \
+  --model-version 1 \
+  --image-repository fraud-model-b
+```
+
+Evaluate deployed predictions once new transactions have labels:
+
+```bash
+TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
+python training/scripts/evaluate_deployed_model.py \
+  --model MODEL_B \
+  --model-version mlflow-1
+```
+
+Check whether recent feature distributions have drifted enough to retrain:
+
+```bash
+TRAINING_DATABASE_URL=postgresql://feast:feast@localhost:5432/fraud_features \
+python training/scripts/check_data_drift.py
+```
+
 ## Production Notes
 
 - Use a time-based train/validation/test split for fraud. Random splits often leak future behavior into training.

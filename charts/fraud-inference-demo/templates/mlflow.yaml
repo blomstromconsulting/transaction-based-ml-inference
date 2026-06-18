@@ -1,0 +1,142 @@
+{{- if .Values.mlflow.enabled -}}
+{{- $postgresSecretName := default (printf "%s-credentials" (include "fraud-inference-demo.postgresName" .)) .Values.postgres.existingSecret -}}
+{{- $rustfsSecretName := include "fraud-inference-demo.rustfsSecretName" . -}}
+{{- $mlflowDatabase := default .Values.postgres.database .Values.mlflow.backendStoreDatabase -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.mlflowName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mlflow
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mlflow
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      initContainers:
+        - name: wait-for-postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+            - |
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE"; do
+                echo "waiting for postgres at ${POSTGRES_HOST}:${POSTGRES_PORT}"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ $mlflowDatabase | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+        - name: wait-for-rustfs-bucket
+          image: amazon/aws-cli:2.17.42
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              until aws --endpoint-url "$MLFLOW_S3_ENDPOINT_URL" s3 ls "s3://${MLFLOW_ARTIFACT_BUCKET}" >/dev/null 2>&1; do
+                echo "waiting for RustFS bucket ${MLFLOW_ARTIFACT_BUCKET}"
+                sleep 2
+              done
+          env:
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.rustfsName" .) .Values.rustfs.service.port | quote }}
+            - name: MLFLOW_ARTIFACT_BUCKET
+              value: {{ .Values.rustfs.bucket | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.accessKeySecretKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.secretKeySecretKey }}
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+      containers:
+        - name: mlflow
+          image: "{{ .Values.mlflow.image.repository }}:{{ .Values.mlflow.image.tag }}"
+          imagePullPolicy: {{ .Values.mlflow.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+            - |
+              export MLFLOW_BACKEND_STORE_URI="postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}"
+              exec mlflow server \
+                --host 0.0.0.0 \
+                --port {{ .Values.mlflow.containerPort }} \
+                --backend-store-uri "$MLFLOW_BACKEND_STORE_URI" \
+                --default-artifact-root "{{ .Values.mlflow.artifactRoot }}" \
+                --serve-artifacts
+          ports:
+            - name: http
+              containerPort: {{ .Values.mlflow.containerPort }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ $mlflowDatabase | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.rustfsName" .) .Values.rustfs.service.port | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.accessKeySecretKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.secretKeySecretKey }}
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+            - name: MLFLOW_SERVER_ALLOWED_HOSTS
+              value: {{ .Values.mlflow.allowedHosts | quote }}
+          {{- with .Values.mlflow.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.mlflowName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: mlflow
+  ports:
+    - name: http
+      port: {{ .Values.mlflow.service.port }}
+      targetPort: http
+{{- end }}

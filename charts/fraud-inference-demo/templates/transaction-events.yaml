@@ -58,6 +58,20 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.transactionEvents.containerPort }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
           env:
             - name: FRAUD_REDIS_HOST
               value: {{ include "fraud-inference-demo.redisName" . | quote }}

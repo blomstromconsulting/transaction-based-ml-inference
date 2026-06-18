@@ -1,0 +1,7 @@
+fastapi==0.111.1
+uvicorn[standard]==0.30.3
+pandas
+pyarrow
+scikit-learn
+joblib
+mlflow==3.14.0

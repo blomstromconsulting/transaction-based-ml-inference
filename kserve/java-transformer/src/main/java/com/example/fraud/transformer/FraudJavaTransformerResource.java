@@ -15,7 +15,6 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.math.BigDecimal;
 import java.net.URI;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -109,28 +108,13 @@ public class FraudJavaTransformerResource {
                 throw new IllegalStateException("Feast online feature lookup failed with HTTP " + response.getStatus());
             }
             FeastOnlineResponse feastResponse = response.readEntity(FeastOnlineResponse.class);
-            return flatten(feastResponse.results());
+            return feastResponse.toFeatureMap();
         }
     }
 
     private String value(Map<String, Object> transaction, String key) {
         Object value = transaction.get(key);
         return value == null ? "" : value.toString();
-    }
-
-    private Map<String, Object> flatten(Map<String, Object> feastResults) {
-        Map<String, Object> flattened = new LinkedHashMap<>();
-        if (feastResults == null) {
-            return flattened;
-        }
-        feastResults.forEach((key, value) -> {
-            if (value instanceof List<?> values) {
-                flattened.put(key, values.isEmpty() ? null : values.get(0));
-            } else {
-                flattened.put(key, value);
-            }
-        });
-        return flattened;
     }
 
     @SuppressWarnings("unchecked")

@@ -2,3 +2,4 @@ kserve
 feast[redis,postgres]==0.63.0
 psycopg-binary==3.2.5
 redis==7.4.0
+protobuf>=4.24.0,<6

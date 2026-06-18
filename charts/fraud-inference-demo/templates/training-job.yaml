@@ -1,0 +1,128 @@
+{{- if .Values.trainingJob.enabled -}}
+{{- $postgresSecretName := default (printf "%s-credentials" (include "fraud-inference-demo.postgresName" .)) .Values.postgres.existingSecret -}}
+{{- $rustfsSecretName := include "fraud-inference-demo.rustfsSecretName" . -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fraud-inference-demo.trainingJobName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: training
+    fraud.example.com/model: {{ .Values.trainingJob.model | quote }}
+spec:
+  backoffLimit: {{ .Values.trainingJob.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: training
+        fraud.example.com/model: {{ .Values.trainingJob.model | quote }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      initContainers:
+        - name: wait-for-postgres-schema
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          command:
+            - sh
+            - -ec
+            - |
+              until psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DATABASE" -tAc "select to_regclass('${POSTGRES_SCHEMA}.fraud_training_examples') is not null" | grep -q t; do
+                echo "waiting for offline training schema"
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_SCHEMA
+              value: {{ .Values.postgres.schema | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+        - name: wait-for-mlflow
+          image: curlimages/curl:8.8.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              until curl -fsS "$MLFLOW_TRACKING_URI/health" >/dev/null; do
+                echo "waiting for MLflow at ${MLFLOW_TRACKING_URI}"
+                sleep 2
+              done
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.mlflowName" .) .Values.mlflow.service.port | quote }}
+      containers:
+        - name: train
+          image: "{{ .Values.trainingJob.image.repository }}:{{ .Values.trainingJob.image.tag }}"
+          imagePullPolicy: {{ .Values.trainingJob.image.pullPolicy }}
+          command:
+            - python
+          args:
+            - training/scripts/train_with_mlflow.py
+            - --model
+            - {{ .Values.trainingJob.model | quote }}
+            - --registered-model-name
+            - {{ .Values.trainingJob.registeredModelName | quote }}
+            - --min-label-age-days
+            - {{ .Values.trainingJob.minLabelAgeDays | quote }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+            - name: TRAINING_DATABASE_URL
+              value: {{ printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%v/%s" .Values.postgres.user (include "fraud-inference-demo.postgresName" .) .Values.postgres.service.port .Values.postgres.database | quote }}
+            - name: FEAST_OFFLINE_STORE_TYPE
+              value: postgres
+            - name: FEAST_POSTGRES_HOST
+              value: {{ include "fraud-inference-demo.postgresName" . | quote }}
+            - name: FEAST_POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: FEAST_POSTGRES_DATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: FEAST_POSTGRES_SCHEMA
+              value: {{ .Values.postgres.schema | quote }}
+            - name: FEAST_POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: FEAST_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.passwordSecretKey }}
+            - name: FEAST_POSTGRES_SSLMODE
+              value: {{ .Values.postgres.sslmode | quote }}
+            - name: FEAST_REDIS_CONNECTION_STRING
+              value: {{ printf "%s:%v" (include "fraud-inference-demo.redisName" .) .Values.redis.service.port | quote }}
+            - name: MLFLOW_TRACKING_URI
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.mlflowName" .) .Values.mlflow.service.port | quote }}
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.rustfsName" .) .Values.rustfs.service.port | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.accessKeySecretKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.secretKeySecretKey }}
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+          {{- with .Values.trainingJob.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

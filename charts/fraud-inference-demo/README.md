@@ -5,6 +5,9 @@ This chart deploys the transaction-based fraud inference demo to Kubernetes:
 - Quarkus `transaction-events` service
 - Redis online feature/statistics store
 - Optional Postgres Feast offline store for retraining
+- Optional single-node RustFS S3-compatible artifact store
+- Optional MLflow tracking server backed by the same Postgres instance
+- Optional training job that registers MLflow models
 - Feast feature server
 - Feast feature writer for online materialization
 - KServe `InferenceService` resources for Model A and Model B
@@ -62,6 +65,8 @@ docker build -f feast/Dockerfile -t fraud-feast-repo:local .
 docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
 docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
+docker build -f training/Dockerfile -t fraud-training:local .
+docker build -f training/mlflow/Dockerfile -t fraud-mlflow:local .
 ```
 
 Deploy with the example values file:
@@ -73,7 +78,7 @@ helm upgrade --install fraud-demo ./charts/fraud-inference-demo \
   -f ./charts/fraud-inference-demo/values-real-feast-kserve-demo.yaml
 ```
 
-This mode deploys a real Feast feature server, Feast feature writer, and real KServe `InferenceService` resources with the Feast transformer. The example still uses tiny Python predictor containers for Model A and Model B so the chart is runnable without external model images.
+This mode deploys Postgres, Redis, single-node RustFS, MLflow, a real Feast feature server, Feast feature writer, and real KServe `InferenceService` resources with the Feast transformer. The example starts with tiny Python predictor containers for Model A and Model B so the chart is runnable before a model has been trained.
 
 The chart supports two transformer implementations:
 
@@ -91,7 +96,7 @@ kserve:
     implementation: java
 ```
 
-The Python transformer uses the KServe and Feast Python SDKs. The Java transformer is a Quarkus proxy transformer that calls Feast feature server REST, validates required online feature values, calls the predictor URL, and returns the same fraud response shape.
+The Python transformer uses the KServe and Feast Python SDKs. The Java transformer is a Quarkus proxy transformer that calls Feast feature server REST, validates required online feature values, calls the predictor URL, and returns the same fraud response shape. The real demo values use the Java transformer.
 
 The same values file enables Postgres and configures Feast with:
 
@@ -105,6 +110,37 @@ feast:
 ```
 
 Redis remains the Feast online store used by the transformer. Postgres is the Feast offline store used by retraining jobs for historical feature retrieval. When Postgres is enabled, the Quarkus service writes live transaction facts, historical feature rows, and prediction logs through its offline data sink. Feast reads those Postgres tables as offline data sources; labels still need to be supplied later from fraud outcomes.
+
+MLflow uses the same Postgres instance for tracking metadata and RustFS for model artifacts:
+
+```yaml
+rustfs:
+  enabled: true
+
+mlflow:
+  enabled: true
+  artifactRoot: s3://mlflow-artifacts
+```
+
+Run a one-shot in-cluster training job:
+
+```bash
+helm upgrade fraud-demo ./charts/fraud-inference-demo \
+  --namespace fraud-demo \
+  -f ./charts/fraud-inference-demo/values-real-feast-kserve-demo.yaml \
+  --set trainingJob.enabled=true \
+  --set-string trainingJob.runId="$(date +%s)" \
+  --set-string trainingJob.model=MODEL_B \
+  --set-string trainingJob.registeredModelName=fraud-MODEL_B
+```
+
+Or run the full clean deployment, training, promotion, scoring, and evaluation flow:
+
+```bash
+scripts/run_e2e_mlflow_demo.sh
+```
+
+The full demo deletes and recreates the namespace unless `RESET=false` is set.
 
 When `postgres.enabled=true`, the chart configures the Quarkus datasource and sets `QUARKUS_FLYWAY_MIGRATE_AT_START=true`. Schema migrations run from the application image's `db/migration` resources before the transaction service starts accepting traffic. The Postgres password is projected from a Kubernetes Secret; set `postgres.existingSecret` and `postgres.passwordSecretKey` to use a pre-created Secret.
 

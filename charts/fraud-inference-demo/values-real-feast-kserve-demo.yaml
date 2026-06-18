@@ -5,9 +5,12 @@
 #   docker build -f feast/writer/Dockerfile -t fraud-feast-writer:local .
 #   docker build -f kserve/transformer/Dockerfile -t fraud-feature-transformer:local .
 #   docker build -f kserve/java-transformer/Dockerfile -t fraud-java-transformer:local .
+#   docker build -f training/Dockerfile -t fraud-training:local .
+#   docker build -f training/mlflow/Dockerfile -t fraud-mlflow:local .
 #
 # This example still uses simple Python demo predictors. Replace those with real
-# model-serving images for a production-like deployment.
+# model-serving images for a production-like deployment, or run
+# scripts/run_e2e_mlflow_demo.sh to train and deploy one from MLflow.
 
 transactionEvents:
   image:
@@ -42,12 +45,38 @@ postgres:
   password: feast
   sslmode: disable
 
+rustfs:
+  enabled: true
+  image:
+    repository: rustfs/rustfs
+    tag: latest
+    pullPolicy: IfNotPresent
+  bucket: mlflow-artifacts
+  accessKey: mlflow
+  secretKey: mlflow-secret
+
+mlflow:
+  enabled: true
+  image:
+    repository: fraud-mlflow
+    tag: local
+    pullPolicy: Never
+  artifactRoot: s3://mlflow-artifacts
+  allowedHosts: "*"
+
+trainingJob:
+  enabled: false
+  image:
+    repository: fraud-training
+    tag: local
+    pullPolicy: Never
+
 kserve:
   enabled: true
   generatedInferenceUrls:
     enabled: false
   transformer:
-    implementation: python
+    implementation: java
     image:
       repository: fraud-feature-transformer
       tag: local

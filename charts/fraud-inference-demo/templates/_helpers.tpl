@@ -68,6 +68,30 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{- define "fraud-inference-demo.rustfsName" -}}
+{{- if .Values.rustfs.fullnameOverride -}}
+{{- .Values.rustfs.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-rustfs" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "fraud-inference-demo.rustfsSecretName" -}}
+{{- default (printf "%s-credentials" (include "fraud-inference-demo.rustfsName" .)) .Values.rustfs.existingSecret -}}
+{{- end -}}
+
+{{- define "fraud-inference-demo.mlflowName" -}}
+{{- if .Values.mlflow.fullnameOverride -}}
+{{- .Values.mlflow.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-mlflow" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "fraud-inference-demo.trainingJobName" -}}
+{{- printf "%s-training-%s" (include "fraud-inference-demo.fullname" .) (.Values.trainingJob.runId | default "manual") | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "fraud-inference-demo.configName" -}}
 {{- printf "%s-model-feature-config" (include "fraud-inference-demo.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

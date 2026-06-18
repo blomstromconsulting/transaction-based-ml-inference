@@ -61,6 +61,22 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.featureWriter.containerPort }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
           env:
             - name: FEAST_REPO_PATH
               value: /feast

@@ -1,0 +1,165 @@
+{{- if .Values.rustfs.enabled -}}
+{{- $rustfsSecretName := include "fraud-inference-demo.rustfsSecretName" . -}}
+{{- if not .Values.rustfs.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $rustfsSecretName }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+type: Opaque
+stringData:
+  {{ .Values.rustfs.accessKeySecretKey }}: {{ .Values.rustfs.accessKey | quote }}
+  {{ .Values.rustfs.secretKeySecretKey }}: {{ .Values.rustfs.secretKey | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fraud-inference-demo.rustfsName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fraud-inference-demo.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: rustfs
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rustfs
+    spec:
+      serviceAccountName: {{ include "fraud-inference-demo.serviceAccountName" . }}
+      containers:
+        - name: rustfs
+          image: "{{ .Values.rustfs.image.repository }}:{{ .Values.rustfs.image.tag }}"
+          imagePullPolicy: {{ .Values.rustfs.image.pullPolicy }}
+          args:
+            - /data
+          ports:
+            - name: s3
+              containerPort: {{ .Values.rustfs.containerPort }}
+            {{- if .Values.rustfs.console.enabled }}
+            - name: console
+              containerPort: {{ .Values.rustfs.consoleContainerPort }}
+            {{- end }}
+          env:
+            - name: RUSTFS_ADDRESS
+              value: {{ printf ":%v" .Values.rustfs.containerPort | quote }}
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.accessKeySecretKey }}
+            - name: RUSTFS_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.secretKeySecretKey }}
+            - name: RUSTFS_CONSOLE_ENABLE
+              value: {{ .Values.rustfs.console.enabled | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.rustfs.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.rustfs.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fraud-inference-demo.rustfsName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fraud-inference-demo.rustfsName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  selector:
+    {{- include "fraud-inference-demo.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+  ports:
+    - name: s3
+      port: {{ .Values.rustfs.service.port }}
+      targetPort: s3
+    {{- if .Values.rustfs.console.enabled }}
+    - name: console
+      port: {{ .Values.rustfs.console.port }}
+      targetPort: console
+    {{- end }}
+{{- if .Values.rustfs.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fraud-inference-demo.rustfsName" . }}
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.rustfs.persistence.size }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fraud-inference-demo.rustfsName" . }}-bucket-init
+  labels:
+    {{- include "fraud-inference-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rustfs-bucket-init
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "fraud-inference-demo.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: rustfs-bucket-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-bucket
+          image: amazon/aws-cli:2.17.42
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - |
+              until aws --endpoint-url "$AWS_ENDPOINT_URL" s3 ls >/dev/null 2>&1; do
+                echo "waiting for RustFS at ${AWS_ENDPOINT_URL}"
+                sleep 2
+              done
+              aws --endpoint-url "$AWS_ENDPOINT_URL" s3 mb "s3://${MLFLOW_ARTIFACT_BUCKET}" || true
+              aws --endpoint-url "$AWS_ENDPOINT_URL" s3 ls "s3://${MLFLOW_ARTIFACT_BUCKET}"
+          env:
+            - name: AWS_ENDPOINT_URL
+              value: {{ printf "http://%s:%v" (include "fraud-inference-demo.rustfsName" .) .Values.rustfs.service.port | quote }}
+            - name: MLFLOW_ARTIFACT_BUCKET
+              value: {{ .Values.rustfs.bucket | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.accessKeySecretKey }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $rustfsSecretName }}
+                  key: {{ .Values.rustfs.secretKeySecretKey }}
+            - name: AWS_DEFAULT_REGION
+              value: us-east-1
+{{- end }}

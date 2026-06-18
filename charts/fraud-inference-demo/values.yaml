@@ -56,6 +56,59 @@ postgres:
     size: 1Gi
   resources: {}
 
+rustfs:
+  enabled: false
+  fullnameOverride: ""
+  image:
+    repository: rustfs/rustfs
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 9000
+  console:
+    enabled: true
+    port: 9001
+  containerPort: 9000
+  consoleContainerPort: 9001
+  bucket: mlflow-artifacts
+  accessKey: mlflow
+  secretKey: mlflow-secret
+  existingSecret: ""
+  accessKeySecretKey: access-key
+  secretKeySecretKey: secret-key
+  persistence:
+    enabled: false
+    size: 5Gi
+  resources: {}
+
+mlflow:
+  enabled: false
+  fullnameOverride: ""
+  image:
+    repository: fraud-mlflow
+    tag: local
+    pullPolicy: Never
+  service:
+    port: 5000
+  containerPort: 5000
+  backendStoreDatabase: ""
+  artifactRoot: s3://mlflow-artifacts
+  allowedHosts: "*"
+  resources: {}
+
+trainingJob:
+  enabled: false
+  runId: manual
+  model: MODEL_B
+  registeredModelName: fraud-MODEL_B
+  minLabelAgeDays: 0
+  image:
+    repository: fraud-training
+    tag: local
+    pullPolicy: Never
+  backoffLimit: 0
+  resources: {}
+
 feast:
   enabled: true
   image:
